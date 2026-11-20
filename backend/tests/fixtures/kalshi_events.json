@@ -1,0 +1,61 @@
+{
+  "events": [
+    {
+      "event_ticker": "KXFEDDECISION-26DEC",
+      "series_ticker": "KXFEDDECISION",
+      "title": "Fed decision in December 2026",
+      "sub_title": "Dec 16, 2026",
+      "category": "Economics",
+      "mutually_exclusive": true,
+      "collateral_return_type": "MECNET",
+      "settlement_sources": [{"name": "Federal Reserve", "url": "https://www.federalreserve.gov"}],
+      "markets": [
+        {
+          "ticker": "KXFEDDECISION-26DEC-H0", "event_ticker": "KXFEDDECISION-26DEC", "market_type": "binary",
+          "yes_sub_title": "Hold", "no_sub_title": "Hold", "status": "active",
+          "close_time": "2026-12-16T18:55:00Z", "open_time": "2026-10-01T14:00:00Z",
+          "yes_bid_dollars": "0.6100", "yes_ask_dollars": "0.6300", "no_bid_dollars": "0.3700", "no_ask_dollars": "0.3900",
+          "last_price_dollars": "0.6200", "previous_price_dollars": "0.5800",
+          "yes_bid_size_fp": "1500.00", "yes_ask_size_fp": "800.00",
+          "volume_fp": "250000.00", "volume_24h_fp": "12000.00", "open_interest_fp": "90000.00",
+          "rules_primary": "If the Federal Reserve holds the target range at its December 2026 meeting, the market resolves to Yes.",
+          "rules_secondary": "Announcement times are in ET."
+        },
+        {
+          "ticker": "KXFEDDECISION-26DEC-C25", "event_ticker": "KXFEDDECISION-26DEC", "market_type": "binary",
+          "yes_sub_title": "Cut 25bps", "no_sub_title": "Cut 25bps", "status": "active",
+          "close_time": "2026-12-16T18:55:00Z",
+          "yes_bid_dollars": "0.0000", "yes_ask_dollars": "1.0000",
+          "last_price_dollars": "0.0000", "previous_price_dollars": "0.0000",
+          "volume_fp": "0.00", "volume_24h_fp": "0.00", "open_interest_fp": "0.00",
+          "rules_primary": "If the Fed cuts by 25bps, resolves Yes.", "rules_secondary": ""
+        }
+      ]
+    },
+    {
+      "event_ticker": "KXHIGHLV-26NOV21",
+      "series_ticker": "KXHIGHLV",
+      "title": "Highest temperature in Las Vegas on Nov 21?",
+      "sub_title": "On Nov 21, 2026",
+      "settlement_sources": [{"name": "National Weather Service", "url": "https://www.weather.gov"}],
+      "markets": [
+        {
+          "ticker": "KXHIGHLV-26NOV21-B70", "event_ticker": "KXHIGHLV-26NOV21", "market_type": "binary",
+          "yes_sub_title": "70° or above", "status": "active",
+          "close_time": "2026-11-22T04:59:00Z",
+          "yes_bid_dollars": "0.2200", "yes_ask_dollars": "0.2500",
+          "last_price_dollars": "0.2400", "previous_price_dollars": "0.3000",
+          "volume_fp": "4100.00", "volume_24h_fp": "900.00", "open_interest_fp": "2000.00",
+          "rules_primary": "Resolves Yes if the NWS reports a high of 70F or more.",
+          "mve_collection_ticker": null
+        },
+        {
+          "ticker": "KXMVECOMBO-1", "event_ticker": "KXHIGHLV-26NOV21", "market_type": "binary",
+          "yes_sub_title": "combo", "status": "active", "mve_collection_ticker": "KXMVECOLL",
+          "yes_bid_dollars": "0.1000", "yes_ask_dollars": "0.2000", "last_price_dollars": "0.1500"
+        }
+      ]
+    }
+  ],
+  "cursor": ""
+}

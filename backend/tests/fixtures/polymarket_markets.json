@@ -1,0 +1,28 @@
+[
+  {
+    "id": "512345", "question": "Will Bitcoin be above $120,000 on December 31?", "conditionId": "0xabc", "slug": "btc-above-120k-dec-31",
+    "endDate": "2026-12-31T23:59:00Z", "outcomes": "[\"Yes\", \"No\"]", "outcomePrices": "[\"0.415\", \"0.585\"]",
+    "clobTokenIds": "[\"111\", \"222\"]", "volume": "1834201.5", "volumeNum": 1834201.5, "volume24hr": 95321.2,
+    "liquidity": "120400.3", "liquidityNum": 120400.3, "bestBid": 0.41, "bestAsk": 0.42, "lastTradePrice": 0.415,
+    "spread": 0.01, "oneDayPriceChange": -0.035, "active": true, "closed": false, "enableOrderBook": true,
+    "description": "This market resolves to Yes if the Binance BTC/USDT 1-minute candle close at 23:59 ET on Dec 31 is above $120,000.",
+    "resolutionSource": "Binance", "category": null,
+    "events": [{"id": "9001", "slug": "bitcoin-price-dec-31", "title": "Bitcoin price on December 31?", "negRisk": false, "tags": [{"label": "Crypto"}, {"label": "Bitcoin"}]}]
+  },
+  {
+    "id": "512999", "question": "Golden Knights", "conditionId": "0xdef", "slug": "nhl-champion-vgk",
+    "endDate": "2027-06-30T00:00:00Z", "outcomes": "[\"Yes\", \"No\"]", "outcomePrices": "[\"0.08\", \"0.92\"]",
+    "clobTokenIds": "[\"333\", \"444\"]", "volumeNum": 50000, "volume24hr": 1200, "liquidityNum": 9000,
+    "bestBid": 0.075, "bestAsk": 0.085, "lastTradePrice": 0.08, "oneDayPriceChange": 0.005,
+    "active": true, "closed": false, "enableOrderBook": true, "description": "Resolves Yes if Vegas wins the Stanley Cup.",
+    "events": [{"id": "9002", "slug": "nhl-stanley-cup-champion-2027", "title": "NHL Stanley Cup Champion 2027", "negRisk": true, "tags": [{"label": "Sports"}, {"label": "NHL"}]}]
+  },
+  {
+    "id": "513000", "question": "Old closed market", "outcomes": "[\"Yes\", \"No\"]", "outcomePrices": "[\"1\", \"0\"]",
+    "active": true, "closed": true, "enableOrderBook": true
+  },
+  {
+    "id": "513001", "question": "AMM-only market", "outcomes": "[\"Yes\", \"No\"]", "outcomePrices": "[\"0.5\", \"0.5\"]",
+    "active": true, "closed": false, "enableOrderBook": false
+  }
+]

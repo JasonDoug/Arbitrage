@@ -1,0 +1,36 @@
+[project]
+name = "predictarb"
+version = "0.1.0"
+description = "Prediction market data, arbitrage and AI analysis platform (Sprint 1: read-only foundation)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "asyncpg>=0.29",
+    "redis>=5.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "respx>=0.21"]
+
+[project.scripts]
+predictarb-api = "predictarb.api.main:run"
+predictarb-ingest = "predictarb.ingest.worker:run"
+predictarb-migrate = "predictarb.migrate:run"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["predictarb*"]
+
+[tool.setuptools.package-data]
+predictarb = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
