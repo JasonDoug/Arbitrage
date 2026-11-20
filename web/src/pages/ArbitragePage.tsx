@@ -244,7 +244,20 @@ function ReviewCard({ l, onOpenMarket, onAct }: { l: Link; onOpenMarket: (id: st
         </span>
         <span className="muted reasons">{l.reasons.join(" · ")}</span>
         {l.rules_changed && l.status !== "suggested" && <span className="badge-warn">rules changed since review</span>}
+        {l.llm_relation && (
+          <span className={`ai-verdict ai-${l.llm_relation}`} title="LLM check of both rule sets. Advisory only.">
+            AI: {l.llm_relation}
+            {l.llm_confidence !== null && ` ${l.llm_confidence.toFixed(0)}%`}
+          </span>
+        )}
       </header>
+      {l.llm_differences && l.llm_differences.length > 0 && (
+        <ul className="ai-diffs">
+          {l.llm_differences.map((d) => (
+            <li key={d}>{d}</li>
+          ))}
+        </ul>
+      )}
       <div className="pair">
         <PairSide s={l.a} open={open} onOpen={onOpenMarket} />
         <PairSide s={l.b} open={open} onOpen={onOpenMarket} />

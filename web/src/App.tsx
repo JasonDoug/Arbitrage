@@ -3,17 +3,18 @@ import { api, venueLabel, type Market, type Meta, type Notification } from "./ap
 import { MarketDrawer } from "./components/MarketDrawer";
 import { NewsSidebar } from "./components/NewsSidebar";
 import { useLive } from "./live";
+import { AiPicksPage } from "./pages/AiPicksPage";
 import { ArbitragePage } from "./pages/ArbitragePage";
 import { MarketsPage } from "./pages/MarketsPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
-type Page = "markets" | "watchlist" | "arb";
+type Page = "markets" | "watchlist" | "arb" | "ai";
 
 const NAV: { id: Page | string; label: string; soon?: string }[] = [
   { id: "markets", label: "Markets" },
   { id: "watchlist", label: "Watchlist" },
   { id: "arb", label: "Arbitrage" },
-  { id: "ai", label: "AI Picks", soon: "Sprint 2" },
+  { id: "ai", label: "AI Picks" },
   { id: "portfolio", label: "Portfolio", soon: "Sprint 3" },
   { id: "sim", label: "Simulation", soon: "Sprint 3+" },
 ];
@@ -21,7 +22,7 @@ const NAV: { id: Page | string; label: string; soon?: string }[] = [
 export default function App() {
   const [page, setPage] = useState<Page>(() => {
     const h = location.hash.slice(1);
-    return h === "watchlist" || h === "arb" ? h : "markets";
+    return h === "watchlist" || h === "arb" || h === "ai" ? h : "markets";
   });
   const [meta, setMeta] = useState<Meta | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export default function App() {
           )}
           {page === "watchlist" && <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />}
           {page === "arb" && <ArbitragePage onOpenMarket={(id) => setOpen(id)} />}
+          {page === "ai" && <AiPicksPage onOpenMarket={(id) => setOpen(id)} />}
         </main>
         {showNews && <NewsSidebar onOpenMarket={(id) => setOpen(id)} latest={lastNotification} />}
       </div>

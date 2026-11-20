@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, cents, closesIn, compact, newsApi, signedCents, venueLabel, type AlertKind, type HistoryPoint, type Market, type NewsItem } from "../api";
+import { aiApi, api, cents, closesIn, compact, newsApi, signedCents, venueLabel, type AlertKind, type HistoryPoint, type Market, type NewsItem, type Analysis, type AiBatch } from "../api";
+import { AnalysisBody, RecBadge } from "./AnalysisView";
 import { NewsRow } from "./NewsSidebar";
 import { useLiveMarket } from "../live";
 import { PriceChart } from "./PriceChart";
@@ -161,6 +162,8 @@ function DrawerBody({
         )}
       </section>
 
+      <AiSection marketId={m.id} />
+
       <AlertEditor market={m} onChanged={onChanged} />
 
       <RelatedNews marketId={m.id} />
@@ -175,6 +178,66 @@ function DrawerBody({
         <p className="rules">{m.rules_text || "No rules text provided by the venue."}</p>
       </section>
     </>
+  );
+}
+
+function AiSection({ marketId }: { marketId: string }) {
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [configured, setConfigured] = useState(true);
+  const [batch, setBatch] = useState<AiBatch | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(
+    (batchId?: number) =>
+      aiApi
+        .analysis(marketId, batchId)
+        .then((r) => {
+          setAnalysis(r.analysis);
+          setConfigured(r.configured);
+          setBatch(r.batch);
+        })
+        .catch((e) => setErr(String(e))),
+    [marketId],
+  );
+
+  useEffect(() => {
+    setBatch(null);
+    load();
+  }, [load]);
+
+  const running = batch?.status === "queued" || batch?.status === "running";
+  useEffect(() => {
+    if (!running || !batch) return;
+    const t = window.setInterval(() => load(batch.id), 3000);
+    return () => window.clearInterval(t);
+  }, [running, batch, load]);
+
+  const start = async () => {
+    setErr(null);
+    try {
+      const r = await aiApi.analyze(marketId);
+      setBatch(r.batch);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h3>
+          AI analysis {analysis?.status === "ok" && <RecBadge rec={analysis.recommendation} />}
+        </h3>
+        <button className="btn" onClick={start} disabled={!configured || running}>
+          {running ? "Analyzing…" : analysis ? "Re-analyze" : "Analyze"}
+        </button>
+      </div>
+      {!configured && <div className="muted">Set OPENROUTER_API_KEY or LOCAL_LLM_URL in .env to enable AI analysis.</div>}
+      {batch?.status === "failed" && <div className="error">{batch.error}</div>}
+      {err && <div className="error">{err}</div>}
+      {analysis ? <AnalysisBody a={analysis} /> : configured && !running && <div className="muted">Not analyzed yet.</div>}
+      {analysis && <div className="disclaimer small">Model output, not financial advice.</div>}
+    </section>
   );
 }
 

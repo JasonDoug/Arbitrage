@@ -45,6 +45,20 @@ class Settings(BaseSettings):
     news_alert_score: float = 0.4  # notify when a watched market gets a match this strong
     news_retention_days: int = 14
 
+    # LLMs (OpenAI-compatible). Fallback order: LLM_ORDER.
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "openrouter/free"
+    local_llm_url: str | None = None  # e.g. http://host.docker.internal:8081/v1
+    local_llm_model: str = "local"
+    local_llm_api_key: str | None = None
+    llm_order: str = "openrouter,local"
+    llm_timeout_s: float = 120
+    ai_max_calls_per_day: int = 400
+    ai_samples: int = 3
+    ai_picks_n: int = 8
+    ai_cache_minutes: int = 15
+    match_llm_per_run: int = 20  # suggested links checked by the LLM per matcher run (0 = off)
+
     catalog_interval_s: int = 600
     quote_interval_s: int = 20
     backfill_top_n: int = 150

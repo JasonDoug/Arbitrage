@@ -627,3 +627,127 @@ async def list_news(
         *args,
     )
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------- AI
+
+async def ai_candidates(pool: asyncpg.Pool, limit: int = 60) -> list[dict[str, Any]]:
+    """Liquid, contested, soon-enough markets with fresh quotes, plus their recent news count."""
+    rows = await pool.fetch(
+        f"""SELECT {MARKET_COLUMNS},
+                   (SELECT count(*) FROM news_market nm JOIN news_item n ON n.id = nm.news_id
+                     WHERE nm.market_id = market.id AND n.published_at > now() - interval '48 hours') AS news_count
+            FROM market
+            WHERE status = 'open' AND mid BETWEEN 0.05 AND 0.95 AND yes_ask IS NOT NULL AND yes_bid IS NOT NULL
+              AND (spread IS NULL OR spread <= 0.06)
+              AND quote_ts > now() - interval '1 hour'
+              AND (close_ts IS NULL OR close_ts BETWEEN now() + interval '12 hours' AND now() + interval '180 days')
+            ORDER BY volume_24h_usd DESC NULLS LAST LIMIT $1""",
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def market_full(pool: asyncpg.Pool, market_id: str) -> dict[str, Any] | None:
+    return await get_market_row(pool, market_id)
+
+
+async def daily_closes(pool: asyncpg.Pool, market_id: str, days: int = 14) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        """SELECT date_trunc('day', ts) AS t, (array_agg(price ORDER BY ts DESC))[1] AS close
+           FROM price_tick WHERE market_id = $1 AND ts > now() - make_interval(days => $2)
+           GROUP BY 1 ORDER BY 1""",
+        market_id, days,
+    )
+    return [dict(r) for r in rows]
+
+
+async def headlines(pool: asyncpg.Pool, market_id: str, days: int = 7, limit: int = 10) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        """SELECT n.id, n.source, n.title, n.url, n.published_at FROM news_item n
+           JOIN news_market nm ON nm.news_id = n.id
+           WHERE nm.market_id = $1 AND n.published_at > now() - make_interval(days => $2)
+           ORDER BY n.published_at DESC LIMIT $3""",
+        market_id, days, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def create_batch(pool: asyncpg.Pool, kind: str, market_ids: list[str] | None = None) -> dict[str, Any]:
+    r = await pool.fetchrow("INSERT INTO ai_batch (kind, market_ids) VALUES ($1, $2) RETURNING *", kind, market_ids or [])
+    return dict(r)
+
+
+async def update_batch(pool: asyncpg.Pool, batch_id: int, **fields: Any) -> None:
+    sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
+    await pool.execute(f"UPDATE ai_batch SET {sets} WHERE id = $1", batch_id, *fields.values())
+
+
+async def get_batch(pool: asyncpg.Pool, batch_id: int) -> dict[str, Any] | None:
+    r = await pool.fetchrow("SELECT * FROM ai_batch WHERE id = $1", batch_id)
+    return dict(r) if r else None
+
+
+async def latest_batch(pool: asyncpg.Pool, kind: str = "picks") -> dict[str, Any] | None:
+    r = await pool.fetchrow("SELECT * FROM ai_batch WHERE kind = $1 ORDER BY id DESC LIMIT 1", kind)
+    return dict(r) if r else None
+
+
+async def insert_analysis(pool: asyncpg.Pool, a: dict[str, Any]) -> int:
+    cols = list(a)
+    return await pool.fetchval(
+        f"INSERT INTO analysis ({', '.join(cols)}) VALUES ({', '.join(f'${i + 1}' for i in range(len(cols)))}) RETURNING id",
+        *a.values(),
+    )
+
+
+_ANALYSIS_VIEW = """
+    a.*, m.title, m.outcome_label, m.event_title, m.venue, m.category, m.url, m.close_ts,
+    m.yes_bid, m.yes_ask, m.mid, m.quote_ts
+"""
+
+
+async def batch_analyses(pool: asyncpg.Pool, batch_id: int) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        f"""SELECT {_ANALYSIS_VIEW} FROM analysis a JOIN market m ON m.id = a.market_id
+            WHERE a.batch_id = $1 ORDER BY a.status, a.opportunity_score DESC NULLS LAST""",
+        batch_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def latest_analysis(pool: asyncpg.Pool, market_id: str) -> dict[str, Any] | None:
+    r = await pool.fetchrow(
+        f"""SELECT {_ANALYSIS_VIEW} FROM analysis a JOIN market m ON m.id = a.market_id
+            WHERE a.market_id = $1 ORDER BY a.created_at DESC LIMIT 1""",
+        market_id,
+    )
+    return dict(r) if r else None
+
+
+async def llm_usage_today(pool: asyncpg.Pool) -> dict[str, Any]:
+    r = await pool.fetchrow(
+        """SELECT count(*) AS calls, count(*) FILTER (WHERE ok) AS ok,
+                  coalesce(sum(prompt_tokens), 0) AS prompt_tokens, coalesce(sum(completion_tokens), 0) AS completion_tokens
+           FROM llm_call WHERE ts >= date_trunc('day', now())"""
+    )
+    return dict(r)
+
+
+async def links_needing_llm(pool: asyncpg.Pool, limit: int) -> list[dict[str, Any]]:
+    rows = await pool.fetch(
+        f"""SELECT {LINK_COLUMNS}, {_SIDE.format(p='a')}, {_SIDE.format(p='b')}
+            FROM market_link l JOIN market a ON a.id = l.market_a JOIN market b ON b.id = l.market_b
+            WHERE l.status = 'suggested' AND l.llm_relation IS NULL AND a.status = 'open' AND b.status = 'open'
+            ORDER BY l.score DESC LIMIT $1""",
+        limit,
+    )
+    return [_split_link(r) for r in rows]
+
+
+async def set_link_llm(pool: asyncpg.Pool, link_id: int, relation: str, confidence: float, differences: list[str], model: str) -> None:
+    await pool.execute(
+        """UPDATE market_link SET llm_relation=$2, llm_confidence=$3, llm_differences=$4, llm_model=$5, updated_at=now()
+           WHERE id=$1""",
+        link_id, relation, confidence, differences, model,
+    )

@@ -59,6 +59,18 @@ To try it with no network access (fake markets with random-walk prices), set `VE
 | Matching | Headline + summary vs. each market's text: TF-IDF, same synonyms as the matcher, at least two shared distinctive terms (including threshold numbers like 120000). |
 | UI | News sidebar (Watchlist / Markets / All; toggle with the News button), "Related news" in the market drawer, and a notification when a strong match hits a watched market. |
 
+## Sprint 2c: AI Picks and AI match checks
+
+| Area | Delivered |
+| --- | --- |
+| LLM client | Any OpenAI-compatible endpoint: OpenRouter (`openrouter/free` routes to a free model by default) and/or a local server (llama.cpp / llama-swap, Ollama, LM Studio, vLLM), tried in `LLM_ORDER`. Tolerates fenced or chatty JSON and `<think>` blocks; one retry on a bad reply. Every call is logged (`llm_call`) and capped by `AI_MAX_CALLS_PER_DAY`. |
+| AI Picks | **AI Analyze** pre-scores liquid, contested markets with fresh quotes (volume, spread, timing, news), analyzes the top 8 with `AI_SAMPLES` samples each, and ranks them by Opportunity Score. The model only estimates a fair probability. Buy YES / Buy NO / Avoid comes from fixed rules: at least a 5¢ edge after the venue's fee and confidence ≥ 60 (10¢ for high-risk). Confidence drops when samples disagree. Each pick shows fair value, net edge, a confidence bar, risk, edge type, reasoning, key risks and catalysts. Results are cached for 15 minutes. |
+| Per-market | "AI analysis" in the market drawer, with Analyze / Re-analyze. |
+| Match checks | After each matcher run, the LLM reads both rule sets of up to `MATCH_LLM_PER_RUN` suggested pairs and labels them identical / inverse / different, listing material differences. Advisory only: you still confirm every pair. |
+| Reproducibility | Each analysis stores the prices and news it saw, every sample, the model and the prompt version. |
+
+**Setup:** add `OPENROUTER_API_KEY=...` to `.env`. For a model running on this machine, also set `LOCAL_LLM_URL=http://host.docker.internal:PORT/v1` and `LOCAL_LLM_MODEL`. Then run `docker compose up -d`.
+
 ## Architecture
 
 ```

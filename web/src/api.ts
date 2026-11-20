@@ -150,6 +150,49 @@ export const ago = (iso: string) => {
   return `${Math.round(m / 1440)}d`;
 };
 
+export type Analysis = {
+  id: number;
+  market_id: string;
+  created_at: string;
+  status: "ok" | "failed";
+  recommendation: "BUY_YES" | "BUY_NO" | "AVOID" | null;
+  fair_value: number | null;
+  confidence: number | null;
+  risk_level: "LOW" | "MEDIUM" | "HIGH" | null;
+  net_edge: number | null;
+  entry_price: number | null;
+  opportunity_score: number | null;
+  edge_type: string | null;
+  reasoning: string | null;
+  edge_summary: string | null;
+  key_risks: string[];
+  catalysts: { event: string; date: string }[];
+  samples: { fair_value: number; confidence: number }[];
+  inputs: { news_ids?: number[]; pre_score?: number };
+  model: string | null;
+  error: string | null;
+  title: string;
+  outcome_label: string | null;
+  venue: string;
+  category: string;
+  url: string | null;
+  close_ts: string | null;
+  yes_bid: number | null;
+  yes_ask: number | null;
+  mid: number | null;
+};
+
+export type AiBatch = { id: number; created_at: string; finished_at: string | null; kind: string; status: "queued" | "running" | "done" | "failed"; market_ids: string[]; done: number; error: string | null };
+export type AiStatus = { configured: boolean; providers: { name: string; model: string }[]; samples: number; budget_per_day: number };
+
+export const aiApi = {
+  picks: () => req<AiStatus & { batch: AiBatch | null; items: Analysis[] }>("/api/ai/picks"),
+  run: (force = false) => req<{ batch: AiBatch; started: boolean }>(`/api/ai/picks/run?force=${force}`, { method: "POST" }),
+  analyze: (id: string) => req<{ batch: AiBatch }>(`/api/ai/analyze/${enc(id)}`, { method: "POST" }),
+  analysis: (id: string, batchId?: number) =>
+    req<AiStatus & { analysis: Analysis | null; batch: AiBatch | null }>(`/api/ai/analysis/${enc(id)}${batchId ? `?batch_id=${batchId}` : ""}`),
+};
+
 export const arbApi = {
   links: (p: { status?: string; q?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();

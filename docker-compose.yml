@@ -3,6 +3,9 @@ name: predictarb
 x-backend: &backend
   build: ./backend
   restart: unless-stopped
+  # Lets containers reach a model server on the host (LOCAL_LLM_URL=http://host.docker.internal:PORT/v1)
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   env_file:
     - path: .env
       required: false

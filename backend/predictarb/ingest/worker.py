@@ -7,6 +7,7 @@ so a slow or failing venue never stalls the others (design doc R3.3).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 from datetime import datetime, timedelta, timezone
@@ -17,7 +18,8 @@ import redis.asyncio as aioredis
 
 import httpx
 
-from predictarb import arb, bus, db, matching, news
+from predictarb import ai, arb, bus, db, matching, news
+from predictarb.llm import LLM, BudgetExceeded, LLMError
 from predictarb.config import Settings, get_settings
 from predictarb.ingest import alerts
 from predictarb.migrate import migrate
@@ -39,6 +41,7 @@ class Ingestor:
         self.rules_loaded_at = datetime.min.replace(tzinfo=timezone.utc)
         self.titles: dict[str, str] = {}
         self.backfill_failed: dict[str, datetime] = {}
+        self.llm = LLM(settings, pool)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------ catalog
@@ -159,9 +162,32 @@ class Ingestor:
         while not self._stop.is_set():
             try:
                 await self.run_matcher()
+                await self.verify_links()
             except Exception:
                 log.exception("matcher failed")
             await self._sleep(self.s.match_interval_s)
+
+    async def verify_links(self) -> int:
+        """Ask the LLM whether top suggested pairs resolve on the same fact. Advisory only:
+        a person still confirms every link."""
+        if not self.llm.configured or self.s.match_llm_per_run <= 0:
+            return 0
+        done = 0
+        for link in await db.links_needing_llm(self.pool, self.s.match_llm_per_run):
+            try:
+                raw, model = await self.llm.chat_json("match", ai.MATCH_SYSTEM, ai.build_match_prompt(link["a"], link["b"]), 0.1, 600)
+            except BudgetExceeded:
+                break
+            except LLMError as e:
+                log.warning("match check %s failed: %s", link["id"], e)
+                continue
+            verdict = ai.normalize_match(raw)
+            if verdict:
+                await db.set_link_llm(self.pool, link["id"], verdict["relation"], verdict["confidence"], verdict["differences"], model)
+                done += 1
+        if done:
+            log.info("LLM checked %d suggested links", done)
+        return done
 
     async def scan_arb(self) -> int:
         links = await db.links_for_arb(self.pool, include_suggested=False)
@@ -177,6 +203,103 @@ class Ingestor:
             except Exception:
                 log.exception("arb scan failed")
             await self._sleep(self.s.arb_interval_s)
+
+    # ------------------------------------------------------------ AI analysis
+
+    async def analyze_market(self, m: dict[str, Any], pre_score: float, batch_id: int | None) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        history = await db.daily_closes(self.pool, m["id"])
+        heads = await db.headlines(self.pool, m["id"])
+        prompt = ai.build_prompt(m, history, heads, now)
+        samples, models, errors = [], set(), []
+        for _ in range(max(1, self.s.ai_samples)):
+            try:
+                raw, model = await self.llm.chat_json("analysis", ai.SYSTEM, prompt, 0.7, 1200)
+            except BudgetExceeded:
+                raise
+            except LLMError as e:
+                errors.append(str(e))
+                continue
+            sample = ai.normalize_sample(raw)
+            if sample:
+                samples.append(sample)
+                models.add(model)
+            else:
+                errors.append("reply missing fair_value")
+        inputs = {
+            "yes_bid": m.get("yes_bid"), "yes_ask": m.get("yes_ask"), "last_price": m.get("last_price"),
+            "quote_ts": m.get("quote_ts"), "news_ids": [h["id"] for h in heads], "pre_score": pre_score,
+        }
+        base = {"batch_id": batch_id, "market_id": m["id"], "inputs": inputs, "prompt_version": ai.PROMPT_VERSION,
+                "model": ", ".join(sorted(models)) or None}
+        if not samples:
+            row = {**base, "status": "failed", "error": "; ".join(errors)[:500] or "no usable reply"}
+        else:
+            c = ai.combine(samples)
+            rec = ai.recommend(m, c["fair_value"], c["confidence"], c["risk_level"], now)
+            row = {
+                **base, "status": "ok", "recommendation": rec["recommendation"], "fair_value": c["fair_value"],
+                "confidence": c["confidence"], "risk_level": c["risk_level"], "net_edge": rec["net_edge"],
+                "entry_price": rec["entry_price"],
+                "opportunity_score": ai.opportunity_score(rec["net_edge"], c["confidence"], pre_score),
+                "edge_type": c["edge_type"], "reasoning": c["reasoning"],
+                "edge_summary": c["edge_summary"] if rec["recommendation"] != "AVOID" or not rec["why_avoid"]
+                else f"{c['edge_summary']} (Avoid: {rec['why_avoid']})".strip(),
+                "key_risks": c["key_risks"], "catalysts": c["catalysts"],
+                "samples": [{"fair_value": s_["fair_value"], "confidence": s_["confidence"]} for s_ in samples],
+            }
+        row["inputs"] = json.loads(ai.dumps(row["inputs"]))
+        await db.insert_analysis(self.pool, row)
+        return row
+
+    async def run_batch(self, batch_id: int) -> None:
+        batch = await db.get_batch(self.pool, batch_id)
+        if batch is None or batch["status"] not in ("queued",):
+            return
+        await db.update_batch(self.pool, batch_id, status="running")
+        try:
+            now = datetime.now(timezone.utc)
+            if batch["kind"] == "picks":
+                cands = await db.ai_candidates(self.pool)
+                scored = sorted(cands, key=lambda c: ai.quant_score(c, c["news_count"], now), reverse=True)[: self.s.ai_picks_n]
+                await db.update_batch(self.pool, batch_id, market_ids=[c["id"] for c in scored])
+                targets = [(c, ai.quant_score(c, c["news_count"], now)) for c in scored]
+            else:
+                targets = []
+                for mid in batch["market_ids"]:
+                    m = await db.market_full(self.pool, mid)
+                    if m:
+                        targets.append((m, ai.quant_score(m, len(await db.headlines(self.pool, mid, 2)), now)))
+            for i, (m, pre) in enumerate(targets, 1):
+                await self.analyze_market(m, pre, batch_id)
+                await db.update_batch(self.pool, batch_id, done=i)
+            await db.update_batch(self.pool, batch_id, status="done", finished_at=datetime.now(timezone.utc))
+        except BudgetExceeded as e:
+            await db.update_batch(self.pool, batch_id, status="failed", error=str(e), finished_at=datetime.now(timezone.utc))
+        except Exception as e:
+            log.exception("AI batch %s failed", batch_id)
+            await db.update_batch(self.pool, batch_id, status="failed", error=str(e)[:500], finished_at=datetime.now(timezone.utc))
+
+    async def ai_loop(self) -> None:
+        # Batches interrupted by a restart: fail the running one, pick up queued ones.
+        await self.pool.execute(
+            "UPDATE ai_batch SET status='failed', error='interrupted by worker restart', finished_at=now() WHERE status='running'"
+        )
+        for row in await self.pool.fetch("SELECT id FROM ai_batch WHERE status='queued' ORDER BY id"):
+            await self.run_batch(row["id"])
+        last_id: str | None = None
+        while not self._stop.is_set():
+            try:
+                if last_id is None:
+                    last_id = await bus.latest_id(self.redis, bus.AI_REQUESTS)
+                msgs = await bus.read(self.redis, {bus.AI_REQUESTS: last_id}, block_ms=5000)
+            except Exception as e:
+                log.warning("AI request read failed: %s", e)
+                await self._sleep(5)
+                continue
+            for _, msg_id, payload in msgs:
+                last_id = msg_id
+                await self.run_batch(int(payload["batch_id"]))
 
     # ------------------------------------------------------------ news
 
@@ -288,6 +411,7 @@ class Ingestor:
         tasks.append(asyncio.create_task(self.match_loop(), name="matcher"))
         tasks.append(asyncio.create_task(self.arb_loop(), name="arb"))
         tasks.append(asyncio.create_task(self.news_loop(), name="news"))
+        tasks.append(asyncio.create_task(self.ai_loop(), name="ai"))
         tasks.append(asyncio.create_task(self.backfill_request_loop(), name="backfill-requests"))
         await self._stop.wait()
         for t in tasks:
@@ -311,6 +435,7 @@ async def main() -> None:
     finally:
         for a in adapters:
             await a.aclose()
+        await ing.llm.aclose()
         await pool.close()
         await redis.aclose()
 

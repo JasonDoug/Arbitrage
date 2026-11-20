@@ -317,6 +317,70 @@ async def news_feed(
     return {"items": await db.list_news(_pool(), scope, market_id, limit)}
 
 
+# ---------------------------------------------------------------- AI
+
+from datetime import timedelta  # noqa: E402
+
+from predictarb.llm import providers as llm_providers  # noqa: E402
+
+
+def _ai_status() -> dict[str, Any]:
+    s = get_settings()
+    return {
+        "configured": bool(llm_providers(s)),
+        "providers": [{"name": p.name, "model": p.model} for p in llm_providers(s)],
+        "samples": s.ai_samples,
+        "budget_per_day": s.ai_max_calls_per_day,
+    }
+
+
+@app.get("/api/ai/status")
+async def ai_status() -> dict[str, Any]:
+    return {**_ai_status(), "usage_today": await db.llm_usage_today(_pool())}
+
+
+async def _enqueue(kind: str, market_ids: list[str] | None = None) -> dict[str, Any]:
+    batch = await db.create_batch(_pool(), kind, market_ids)
+    await bus.publish(app.state.redis, bus.AI_REQUESTS, {"batch_id": batch["id"]})
+    return batch
+
+
+@app.post("/api/ai/picks/run")
+async def run_picks(force: bool = False) -> dict[str, Any]:
+    if not _ai_status()["configured"]:
+        raise HTTPException(409, "No LLM configured: set OPENROUTER_API_KEY and/or LOCAL_LLM_URL in .env")
+    last = await db.latest_batch(_pool(), "picks")
+    if last and last["status"] in ("queued", "running"):
+        return {"batch": last, "started": False}
+    fresh = last and last["status"] == "done" and last["finished_at"] and \
+        datetime.now(timezone.utc) - last["finished_at"] < timedelta(minutes=get_settings().ai_cache_minutes)
+    if fresh and not force:
+        return {"batch": last, "started": False}
+    return {"batch": await _enqueue("picks"), "started": True}
+
+
+@app.get("/api/ai/picks")
+async def picks() -> dict[str, Any]:
+    last = await db.latest_batch(_pool(), "picks")
+    items = await db.batch_analyses(_pool(), last["id"]) if last else []
+    return {**_ai_status(), "batch": last, "items": items}
+
+
+@app.post("/api/ai/analyze/{market_id}")
+async def analyze_one(market_id: str) -> dict[str, Any]:
+    if not _ai_status()["configured"]:
+        raise HTTPException(409, "No LLM configured: set OPENROUTER_API_KEY and/or LOCAL_LLM_URL in .env")
+    if await db.get_market_row(_pool(), market_id) is None:
+        raise HTTPException(404, "market not found")
+    return {"batch": await _enqueue("single", [market_id])}
+
+
+@app.get("/api/ai/analysis/{market_id}")
+async def market_analysis(market_id: str, batch_id: int | None = None) -> dict[str, Any]:
+    batch = await db.get_batch(_pool(), batch_id) if batch_id else None
+    return {**_ai_status(), "analysis": await db.latest_analysis(_pool(), market_id), "batch": batch}
+
+
 # ---------------------------------------------------------------- live feed
 
 @app.websocket("/ws")

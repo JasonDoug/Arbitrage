@@ -11,6 +11,7 @@ import redis.asyncio as aioredis
 QUOTES = "quotes"
 NOTIFICATIONS = "notifications"
 BACKFILL_REQUESTS = "backfill.requests"
+AI_REQUESTS = "ai.requests"
 MAXLEN = 5000
 
 
