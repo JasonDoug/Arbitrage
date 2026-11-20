@@ -33,6 +33,7 @@ MARKET_COLUMNS = """
 
 async def _init_conn(conn: asyncpg.Connection) -> None:
     await conn.set_type_codec("jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
+    await conn.set_type_codec("json", encoder=json.dumps, decoder=json.loads, schema="pg_catalog")
 
 
 async def create_pool(dsn: str, **kw: Any) -> asyncpg.Pool:
@@ -546,3 +547,83 @@ async def record_arb(pool: asyncpg.Pool, opps: list[Any], tracked_links: set[int
 async def arb_episodes(pool: asyncpg.Pool) -> dict[tuple[int, str], dict[str, Any]]:
     rows = await pool.fetch("SELECT * FROM arb_opportunity WHERE closed_at IS NULL")
     return {(r["link_id"], r["direction"]): dict(r) for r in rows}
+
+
+# ---------------------------------------------------------------- news
+
+async def insert_news(pool: asyncpg.Pool, items: list[Any]) -> list[tuple[int, Any]]:
+    """Insert news items; returns (id, item) for the ones that were new."""
+    new = []
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for it in items:
+                nid = await conn.fetchval(
+                    """INSERT INTO news_item (url, title_key, source, title, summary, published_at)
+                       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING RETURNING id""",
+                    it.url, it.title_key, it.source, it.title, it.summary, it.published_at,
+                )
+                if nid is not None:
+                    new.append((nid, it))
+    return new
+
+
+async def insert_news_links(pool: asyncpg.Pool, rows: list[tuple[int, str, float, list[str]]]) -> None:
+    if rows:
+        await pool.executemany(
+            """INSERT INTO news_market (news_id, market_id, score, matched_terms) VALUES ($1,$2,$3,$4)
+               ON CONFLICT DO NOTHING""",
+            rows,
+        )
+
+
+async def markets_for_news(pool: asyncpg.Pool) -> list[dict[str, Any]]:
+    rows = await pool.fetch("SELECT id, title, outcome_label, event_title FROM market WHERE status='open'")
+    return [dict(r) for r in rows]
+
+
+async def watched_ids(pool: asyncpg.Pool, user_id: str = "me") -> set[str]:
+    return {r["market_id"] for r in await pool.fetch("SELECT market_id FROM watchlist_item WHERE user_id=$1", user_id)}
+
+
+async def notify(pool: asyncpg.Pool, market_id: str | None, kind: str, message: str, user_id: str = "me") -> dict[str, Any]:
+    r = await pool.fetchrow(
+        "INSERT INTO notification (user_id, market_id, kind, message) VALUES ($1,$2,$3,$4) RETURNING *",
+        user_id, market_id, kind, message,
+    )
+    return dict(r)
+
+
+async def prune_news(pool: asyncpg.Pool, days: int) -> int:
+    res = await pool.execute("DELETE FROM news_item WHERE published_at < now() - make_interval(days => $1)", days)
+    return int(res.split()[-1])
+
+
+async def list_news(
+    pool: asyncpg.Pool, scope: str = "watchlist", market_id: str | None = None, limit: int = 50, user_id: str = "me"
+) -> list[dict[str, Any]]:
+    """Recent news with the markets each item matched. scope: 'watchlist' | 'matched' | 'all'."""
+    args: list[Any] = [limit]
+    if market_id:
+        args.append(market_id)
+        cond = f"n.id IN (SELECT news_id FROM news_market WHERE market_id = ${len(args)})"
+    elif scope == "watchlist":
+        args.append(user_id)
+        cond = f"n.id IN (SELECT nm.news_id FROM news_market nm JOIN watchlist_item w ON w.market_id = nm.market_id AND w.user_id = ${len(args)})"
+    elif scope == "matched":
+        cond = "n.id IN (SELECT news_id FROM news_market)"
+    else:
+        cond = "TRUE"
+    rows = await pool.fetch(
+        f"""SELECT n.id, n.url, n.source, n.title, n.summary, n.published_at,
+                   COALESCE(json_agg(json_build_object(
+                       'id', m.id, 'title', m.title, 'outcome_label', m.outcome_label, 'venue', m.venue,
+                       'score', nm.score, 'terms', nm.matched_terms) ORDER BY nm.score DESC)
+                     FILTER (WHERE m.id IS NOT NULL), '[]') AS markets
+            FROM news_item n
+            LEFT JOIN news_market nm ON nm.news_id = n.id
+            LEFT JOIN market m ON m.id = nm.market_id AND m.status = 'open'
+            WHERE {cond}
+            GROUP BY n.id ORDER BY n.published_at DESC LIMIT $1""",
+        *args,
+    )
+    return [dict(r) for r in rows]

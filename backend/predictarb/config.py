@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     # Unset = built-in defaults (predictarb/arb.py).
     polymarket_fee_rates: dict[str, float] | None = None
 
+    # News
+    news_interval_s: int = 300
+    news_feeds: dict[str, str] | None = None  # JSON {"name": "url"}; unset = built-in list
+    news_min_score: float = 0.25
+    news_alert_score: float = 0.4  # notify when a watched market gets a match this strong
+    news_retention_days: int = 14
+
     catalog_interval_s: int = 600
     quote_interval_s: int = 20
     backfill_top_n: int = 150

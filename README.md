@@ -50,6 +50,15 @@ To try it with no network access (fake markets with random-walk prices), set `VE
 | Episodes | The worker records how long each positive edge stays open (`arb_opportunity`), shown as "Open for". |
 | Tracking | Watched and linked markets stay tracked even if they fall out of a venue's top-N cut. |
 
+## Sprint 2b: news
+
+| Area | Delivered |
+| --- | --- |
+| Feeds | 15 free RSS feeds (BBC, NPR, Guardian, Al Jazeera, Politico, NYT, CNBC, Federal Reserve, BLS, CoinDesk, ESPN), polled every 5 minutes. Override the list with `NEWS_FEEDS` (JSON name → URL). A failing feed is logged and skipped. |
+| Dedupe | Same URL or same headline across feeds keeps the earliest copy. Items older than `NEWS_RETENTION_DAYS` (14) are pruned. |
+| Matching | Headline + summary vs. each market's text: TF-IDF, same synonyms as the matcher, at least two shared distinctive terms (including threshold numbers like 120000). |
+| UI | News sidebar (Watchlist / Markets / All; toggle with the News button), "Related news" in the market drawer, and a notification when a strong match hits a watched market. |
+
 ## Architecture
 
 ```

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>BBC News</title>
+<item><title>Fed holds interest rates steady, signals no change in December</title>
+<link>https://www.bbc.co.uk/news/business-1</link>
+<description><![CDATA[<p>The Federal Reserve kept its benchmark rate <b>unchanged</b> on Wednesday.</p>]]></description>
+<pubDate>Fri, 20 Nov 2026 14:00:00 GMT</pubDate></item>
+<item><title>Bitcoin climbs above $120,000 for the first time since October</title>
+<link>https://www.bbc.co.uk/news/business-2</link>
+<description>Crypto markets rallied as bitcoin topped $120k.</description>
+<pubDate>Fri, 20 Nov 2026 15:30:00 GMT</pubDate></item>
+<item><title>Old story about something else</title>
+<link>https://www.bbc.co.uk/news/old</link>
+<pubDate>Mon, 02 Nov 2026 10:00:00 GMT</pubDate></item>
+<item><title>No link here</title></item>
+</channel></rss>

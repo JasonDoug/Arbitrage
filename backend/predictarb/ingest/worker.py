@@ -15,7 +15,9 @@ from typing import Any
 import asyncpg
 import redis.asyncio as aioredis
 
-from predictarb import arb, bus, db, matching
+import httpx
+
+from predictarb import arb, bus, db, matching, news
 from predictarb.config import Settings, get_settings
 from predictarb.ingest import alerts
 from predictarb.migrate import migrate
@@ -176,6 +178,41 @@ class Ingestor:
                 log.exception("arb scan failed")
             await self._sleep(self.s.arb_interval_s)
 
+    # ------------------------------------------------------------ news
+
+    async def poll_news(self, client: httpx.AsyncClient) -> int:
+        feeds = self.s.news_feeds or news.DEFAULT_FEEDS
+        items, errors = await news.fetch_feeds(feeds, client)
+        for name, err in errors.items():
+            log.warning("news feed %s failed: %s", name, err)
+        new = await db.insert_news(self.pool, items)
+        if not new:
+            return 0
+        index = news.MarketIndex.build(await db.markets_for_news(self.pool))
+        watched = await db.watched_ids(self.pool)
+        links = []
+        for nid, item in new:
+            for mid, score, terms in index.match(item, self.s.news_min_score):
+                links.append((nid, mid, score, terms))
+                if mid in watched and score >= self.s.news_alert_score:
+                    note = await db.notify(self.pool, mid, "news", f"{item.source}: {item.title}")
+                    await bus.publish(self.redis, bus.NOTIFICATIONS, note)
+        await db.insert_news_links(self.pool, links)
+        log.info("news: %d new items from %d feeds, %d market matches", len(new), len(feeds) - len(errors), len(links))
+        return len(new)
+
+    async def news_loop(self) -> None:
+        await asyncio.gather(*(e.wait() for e in self.catalog_ready.values()))
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; predictarb/0.1; personal news reader)"}
+        async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+            while not self._stop.is_set():
+                try:
+                    await self.poll_news(client)
+                    await db.prune_news(self.pool, self.s.news_retention_days)
+                except Exception:
+                    log.exception("news poll failed")
+                await self._sleep(self.s.news_interval_s)
+
     # ------------------------------------------------------------ history backfill
 
     async def backfill_one(self, row: dict[str, Any]) -> int:
@@ -250,6 +287,7 @@ class Ingestor:
         tasks.append(asyncio.create_task(self.backfill_loop(), name="backfill"))
         tasks.append(asyncio.create_task(self.match_loop(), name="matcher"))
         tasks.append(asyncio.create_task(self.arb_loop(), name="arb"))
+        tasks.append(asyncio.create_task(self.news_loop(), name="news"))
         tasks.append(asyncio.create_task(self.backfill_request_loop(), name="backfill-requests"))
         await self._stop.wait()
         for t in tasks:

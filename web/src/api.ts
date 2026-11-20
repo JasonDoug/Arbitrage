@@ -131,6 +131,25 @@ export type ArbItem = {
   b: LinkSide;
 };
 
+export type NewsMarket = { id: string; title: string; outcome_label: string | null; venue: string; score: number; terms: string[] };
+export type NewsItem = { id: number; url: string; source: string; title: string; summary: string | null; published_at: string; markets: NewsMarket[] };
+
+export const newsApi = {
+  list: (p: { scope?: "watchlist" | "matched" | "all"; market_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    Object.entries(p).forEach(([k, v]) => v !== undefined && qs.set(k, String(v)));
+    return req<{ items: NewsItem[] }>(`/api/news?${qs}`);
+  },
+};
+
+export const ago = (iso: string) => {
+  const m = (Date.now() - new Date(iso).getTime()) / 60000;
+  if (m < 1) return "now";
+  if (m < 60) return `${Math.round(m)}m`;
+  if (m < 48 * 60) return `${Math.round(m / 60)}h`;
+  return `${Math.round(m / 1440)}d`;
+};
+
 export const arbApi = {
   links: (p: { status?: string; q?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();

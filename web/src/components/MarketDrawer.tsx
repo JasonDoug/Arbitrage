@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, cents, closesIn, compact, signedCents, venueLabel, type AlertKind, type HistoryPoint, type Market } from "../api";
+import { api, cents, closesIn, compact, newsApi, signedCents, venueLabel, type AlertKind, type HistoryPoint, type Market, type NewsItem } from "../api";
+import { NewsRow } from "./NewsSidebar";
 import { useLiveMarket } from "../live";
 import { PriceChart } from "./PriceChart";
 
@@ -162,6 +163,8 @@ function DrawerBody({
 
       <AlertEditor market={m} onChanged={onChanged} />
 
+      <RelatedNews marketId={m.id} />
+
       <section className="panel">
         <h3>Resolution rules</h3>
         {m.resolution_source && (
@@ -172,6 +175,32 @@ function DrawerBody({
         <p className="rules">{m.rules_text || "No rules text provided by the venue."}</p>
       </section>
     </>
+  );
+}
+
+function RelatedNews({ marketId }: { marketId: string }) {
+  const [items, setItems] = useState<NewsItem[] | null>(null);
+  useEffect(() => {
+    newsApi
+      .list({ market_id: marketId, limit: 8 })
+      .then((r) => setItems(r.items))
+      .catch(() => setItems([]));
+  }, [marketId]);
+  return (
+    <section className="panel">
+      <h3>Related news</h3>
+      {items === null ? (
+        <div className="muted">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="muted">No matching headlines in the last 14 days.</div>
+      ) : (
+        <div className="news-list flat">
+          {items.map((n) => (
+            <NewsRow key={n.id} n={n} compact />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

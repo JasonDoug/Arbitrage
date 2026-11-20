@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, venueLabel, type Market, type Meta, type Notification } from "./api";
 import { MarketDrawer } from "./components/MarketDrawer";
+import { NewsSidebar } from "./components/NewsSidebar";
 import { useLive } from "./live";
 import { ArbitragePage } from "./pages/ArbitragePage";
 import { MarketsPage } from "./pages/MarketsPage";
@@ -53,6 +54,23 @@ export default function App() {
     location.hash = page === "markets" ? "" : page;
   }, [page]);
 
+  const [showNews, setShowNewsState] = useState(() => {
+    try {
+      return localStorage.getItem("showNews") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleNews = () => {
+    setShowNewsState((v) => {
+      try {
+        localStorage.setItem("showNews", v ? "0" : "1");
+      } catch {
+        /* in-memory only */
+      }
+      return !v;
+    });
+  };
   const onOpen = useCallback((m: Market) => setOpen(m.id), []);
   const onChanged = useCallback(() => setRefreshKey((k) => k + 1), []);
 
@@ -75,6 +93,9 @@ export default function App() {
             <i /> {connected ? "Streaming" : "Reconnecting…"}
           </span>
         </div>
+        <button className={`btn news-toggle ${showNews ? "on" : ""}`} onClick={toggleNews} aria-pressed={showNews}>
+          News
+        </button>
         <Bell latest={lastNotification} onOpenMarket={(id) => setOpen(id)} />
       </header>
       <div className="body">
@@ -99,6 +120,7 @@ export default function App() {
           {page === "watchlist" && <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />}
           {page === "arb" && <ArbitragePage onOpenMarket={(id) => setOpen(id)} />}
         </main>
+        {showNews && <NewsSidebar onOpenMarket={(id) => setOpen(id)} latest={lastNotification} />}
       </div>
       {open && <MarketDrawer marketId={open} onClose={() => setOpen(null)} onChanged={onChanged} />}
       <Toasts latest={lastNotification} onOpenMarket={(id) => setOpen(id)} />
@@ -172,7 +194,7 @@ function Toasts({ latest, onOpenMarket }: { latest: Notification | null; onOpenM
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
         <button key={t.id} className="toast" onClick={() => t.market_id && onOpenMarket(t.market_id)}>
-          <strong>Price alert</strong>
+          <strong>{t.kind === "news" ? "News on a watched market" : "Price alert"}</strong>
           <span>{t.message}</span>
         </button>
       ))}

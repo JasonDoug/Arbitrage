@@ -306,6 +306,17 @@ async def arbitrage(
     }
 
 
+# ---------------------------------------------------------------- news
+
+@app.get("/api/news")
+async def news_feed(
+    scope: Literal["watchlist", "matched", "all"] = "watchlist",
+    market_id: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    return {"items": await db.list_news(_pool(), scope, market_id, limit)}
+
+
 # ---------------------------------------------------------------- live feed
 
 @app.websocket("/ws")
