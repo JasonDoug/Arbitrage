@@ -68,6 +68,8 @@ class DemoAdapter(VenueAdapter):
             venue_market_id=r["id"],
             yes_bid=round(max(0.01, p - half), 2),
             yes_ask=round(min(0.99, p + half), 2),
+            yes_bid_size=round(r["volume"] / 400, 0),
+            yes_ask_size=round(r["volume"] / 500, 0),
             last_price=round(p, 2),
             change_24h=round(p - r["p0"], 4),
             volume_24h=round(r["volume"], 2),

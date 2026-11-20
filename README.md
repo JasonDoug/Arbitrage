@@ -71,6 +71,19 @@ To try it with no network access (fake markets with random-walk prices), set `VE
 
 **Setup:** add `OPENROUTER_API_KEY=...` to `.env`. For a model running on this machine, also set `LOCAL_LLM_URL=http://host.docker.internal:PORT/v1` and `LOCAL_LLM_MODEL`. Then run `docker compose up -d`.
 
+## Sprint 3: paper trading and order-book depth
+
+| Area | Delivered |
+| --- | --- |
+| Order books | Live books from Polymarket's CLOB and Kalshi, normalized to YES/NO ladders. If Kalshi's book endpoint needs auth, the best bid/ask sizes Kalshi reports on each market are used instead, and the UI says "top of book only". Shown in the market drawer. |
+| Depth-aware arbitrage | For positive-edge pairs, both books are walked level by level to find the size with the most total dollar edge after fees: "Max size" and "$ edge" columns. |
+| Paper trading | Accounts with fake cash ($10,000 default; create more, reset any). The market drawer has a ticket with buy/sell, YES/NO, market/limit and a live preview (fill price, fee, max loss, payout). Market orders walk the live book with a 10¢ fat-finger guard and pay the venue's taker fee. Limit orders fill what's marketable now and rest the remainder, which the worker fills fee-free when a later quote reaches the price (no queue position, so fills at the touch are optimistic). |
+| Arbitrage execution | "Paper trade" on an arbitrage row buys both legs as one group, each capped 2¢ past the quote. Unfilled remainders are cancelled, and you're warned if the legs end up uneven. |
+| Ledger | Cash, positions, average cost (fees included), realized and unrealized P&L are always derived from the fills table. Positions settle at $1/$0 when the venue reports a result (checked every 10 minutes). |
+| Portfolio tab | Equity, P&L, cash and reserved cash, fees, win rate, max drawdown; equity curve (snapshots every 5 minutes) marked at mid or at exit bid; positions, open orders (cancel), and fill history. |
+
+Every trade in the app is paper. Nothing here can place a real order.
+
 ## Architecture
 
 ```

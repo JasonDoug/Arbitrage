@@ -27,7 +27,8 @@ MARKET_COLUMNS = """
     id, venue, venue_market_id, event_id, event_title, title, outcome_label, url, category, tags,
     rules_text, resolution_source, close_ts, status, volume_unit, total_volume, extra,
     yes_bid, yes_ask, last_price, mid, spread, change_24h, volume_24h, volume_24h_usd,
-    open_interest, liquidity_usd, quote_ts, first_seen, last_seen
+    open_interest, liquidity_usd, quote_ts, first_seen, last_seen, yes_bid_size, yes_ask_size,
+    result, resolved_at
 """
 
 
@@ -139,7 +140,8 @@ UPDATE market SET
     volume_24h_usd=COALESCE($9, volume_24h_usd),
     open_interest=COALESCE($10, open_interest),
     liquidity_usd=COALESCE($11, liquidity_usd),
-    quote_ts=$12
+    quote_ts=$12,
+    yes_bid_size=$13, yes_ask_size=$14
 WHERE id=$1
 """
 
@@ -154,6 +156,7 @@ async def apply_quotes(pool: asyncpg.Pool, quotes: list[Quote], record_ticks: bo
                     (
                         q.id, q.yes_bid, q.yes_ask, q.last_price, q.mid, q.spread, q.change_24h,
                         q.volume_24h, q.volume_24h_usd, q.open_interest, q.liquidity_usd, q.ts or now,
+                        q.yes_bid_size, q.yes_ask_size,
                     )
                     for q in quotes
                 ],
@@ -420,7 +423,9 @@ _SIDE = """
     {p}.event_title AS {p}_event_title, {p}.category AS {p}_category, {p}.url AS {p}_url,
     {p}.close_ts AS {p}_close_ts, {p}.status AS {p}_status, {p}.yes_bid AS {p}_yes_bid, {p}.yes_ask AS {p}_yes_ask,
     {p}.mid AS {p}_mid, {p}.quote_ts AS {p}_quote_ts, {p}.rules_text AS {p}_rules_text,
-    {p}.resolution_source AS {p}_resolution_source, {p}.volume_24h_usd AS {p}_volume_24h_usd
+    {p}.resolution_source AS {p}_resolution_source, {p}.volume_24h_usd AS {p}_volume_24h_usd,
+    {p}.venue_market_id AS {p}_venue_market_id, {p}.extra AS {p}_extra,
+    {p}.yes_bid_size AS {p}_yes_bid_size, {p}.yes_ask_size AS {p}_yes_ask_size
 """
 
 
@@ -750,4 +755,39 @@ async def set_link_llm(pool: asyncpg.Pool, link_id: int, relation: str, confiden
         """UPDATE market_link SET llm_relation=$2, llm_confidence=$3, llm_differences=$4, llm_model=$5, updated_at=now()
            WHERE id=$1""",
         link_id, relation, confidence, differences, model,
+    )
+
+
+# ---------------------------------------------------------------- paper trading
+
+async def markets_by_ids(pool: asyncpg.Pool, ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not ids:
+        return {}
+    rows = await pool.fetch(f"SELECT {MARKET_COLUMNS} FROM market WHERE id = ANY($1)", ids)
+    return {r["id"]: dict(r) for r in rows}
+
+
+async def markets_with_open_orders(pool: asyncpg.Pool) -> set[str]:
+    return {r["market_id"] for r in await pool.fetch("SELECT DISTINCT market_id FROM paper_order WHERE status='open'")}
+
+
+async def markets_to_settle(pool: asyncpg.Pool) -> list[dict[str, Any]]:
+    """Markets with open paper positions that are past their end date or no longer open."""
+    rows = await pool.fetch(
+        f"""SELECT {MARKET_COLUMNS} FROM market WHERE result IS NULL AND id IN (
+                SELECT market_id FROM paper_fill GROUP BY market_id, account_id, side
+                HAVING sum(CASE WHEN action='buy' THEN qty ELSE -qty END) > 1e-9)
+              AND (status <> 'open' OR close_ts < now())"""
+    )
+    return [dict(r) for r in rows]
+
+
+async def paper_accounts(pool: asyncpg.Pool, user_id: str = "me") -> list[dict[str, Any]]:
+    return [dict(r) for r in await pool.fetch("SELECT * FROM paper_account WHERE user_id=$1 ORDER BY id", user_id)]
+
+
+async def snapshot_equity(pool: asyncpg.Pool, account_id: int, equity: float, cash: float) -> None:
+    await pool.execute(
+        "INSERT INTO paper_equity (account_id, ts, equity, cash) VALUES ($1, date_trunc('minute', now()), $2, $3) ON CONFLICT DO NOTHING",
+        account_id, equity, cash,
     )

@@ -7,13 +7,13 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from datetime import datetime, timezone
 
-from predictarb import arb, bus, db
+from predictarb import arb, books, bus, db
 from predictarb.categories import CATEGORIES
 from predictarb.config import get_settings
 from predictarb.migrate import migrate
@@ -69,12 +69,14 @@ async def lifespan(app: FastAPI):
     app.state.pool = await db.create_pool(s.database_url)
     app.state.redis = bus.connect(s.redis_url)
     app.state.hub = Hub()
+    app.state.fetcher = books.BookFetcher(s)
     relay = asyncio.create_task(_relay(app))
     try:
         yield
     finally:
         relay.cancel()
         await asyncio.gather(relay, return_exceptions=True)
+        await app.state.fetcher.aclose()
         await app.state.pool.close()
         await app.state.redis.aclose()
 
@@ -90,6 +92,11 @@ app.add_middleware(
 
 def _pool():
     return app.state.pool
+
+
+from predictarb.api.paper_routes import leg_ladders, router as paper_router  # noqa: E402
+
+app.include_router(paper_router)
 
 
 # ---------------------------------------------------------------- meta
@@ -275,6 +282,8 @@ async def arbitrage(
     include_unconfirmed: bool = False,
     min_edge: float = Query(0.0, ge=-1, le=1, description="minimum net edge per contract, in dollars"),
     sort: Literal["edge", "annualized"] = "edge",
+    depth: bool = True,
+    request: Request = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     s = get_settings()
     now = datetime.now(timezone.utc)
@@ -282,12 +291,24 @@ async def arbitrage(
     found = arb.scan(rows, now, s.arb_max_quote_age_s, s.polymarket_fee_rates)
     episodes = await db.arb_episodes(_pool())
     items = []
+    depth_budget = 10  # fetch live books for at most 10 positive-edge rows per request
     for link, opp in found:
         if opp.edge < min_edge:
             continue
         ep = episodes.get((link["id"], opp.direction))
+        size = None
+        if depth and opp.edge > 0 and depth_budget > 0:
+            depth_budget -= 1
+            try:
+                la, lb, src = await leg_ladders(request, link, opp)
+                size = {**books.best_pair_size(la, lb, link["a"]["venue"], link["b"]["venue"],
+                                               link["a"]["category"], link["b"]["category"], s.polymarket_fee_rates),
+                        "source": src}
+            except Exception as e:  # depth is best-effort; the row still shows
+                size = {"error": str(e)[:200]}
         items.append(
             {
+                "depth": size,
                 **opp.as_dict(),
                 "link": {k: link[k] for k in ("id", "status", "relation", "score", "rules_changed")},
                 "a": {k: link["a"][k] for k in _SIDE_KEYS},

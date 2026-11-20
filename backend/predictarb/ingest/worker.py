@@ -18,7 +18,7 @@ import redis.asyncio as aioredis
 
 import httpx
 
-from predictarb import ai, arb, bus, db, matching, news
+from predictarb import ai, arb, books, bus, db, matching, news, paper
 from predictarb.llm import LLM, BudgetExceeded, LLMError
 from predictarb.config import Settings, get_settings
 from predictarb.ingest import alerts
@@ -42,6 +42,9 @@ class Ingestor:
         self.titles: dict[str, str] = {}
         self.backfill_failed: dict[str, datetime] = {}
         self.llm = LLM(settings, pool)
+        self.fetcher = books.BookFetcher(settings)
+        self.open_order_markets: set[str] = set()
+        self.open_orders_loaded_at = datetime.min.replace(tzinfo=timezone.utc)
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------ catalog
@@ -106,6 +109,7 @@ class Ingestor:
                 ],
             )
             await self.check_alerts(changed)
+            await self.check_resting_orders(changed)
         for q in changed:
             self.last_quotes[q.id] = q
         await db.set_venue_status(self.pool, adapter.venue_id, True)
@@ -121,6 +125,58 @@ class Ingestor:
             except Exception as e:
                 log.warning("%s quote poll failed: %s", adapter.venue_id, e)
                 await db.set_venue_status(self.pool, adapter.venue_id, False, str(e))
+
+    # ------------------------------------------------------------ paper trading
+
+    async def check_resting_orders(self, quotes: list[Quote]) -> int:
+        now = datetime.now(timezone.utc)
+        if now - self.open_orders_loaded_at > timedelta(seconds=10):
+            self.open_order_markets = await db.markets_with_open_orders(self.pool)
+            self.open_orders_loaded_at = now
+        n = 0
+        for q in quotes:
+            if q.id not in self.open_order_markets:
+                continue
+            m = {"id": q.id, "yes_bid": q.yes_bid, "yes_ask": q.yes_ask,
+                 "yes_bid_size": q.yes_bid_size, "yes_ask_size": q.yes_ask_size}
+            for f in await paper.fill_resting(self.pool, m):
+                n += 1
+                note = await db.notify(self.pool, q.id, "paper",
+                                       f"Paper {f['action']} {f['qty']:g} {f['side']} filled at {f['price'] * 100:.1f}\u00a2: {self.titles.get(q.id, q.id)}")
+                await bus.publish(self.redis, bus.NOTIFICATIONS, note)
+        return n
+
+    async def settle(self) -> int:
+        settled = 0
+        for m in await db.markets_to_settle(self.pool):
+            result = await self.fetcher.resolution(m)
+            if result:
+                n = await paper.settle_market(self.pool, m["id"], result)
+                settled += 1
+                note = await db.notify(self.pool, m["id"], "paper",
+                                       f"Resolved {result.upper()}: {m['title']} ({n} paper position{'s' if n != 1 else ''} settled)")
+                await bus.publish(self.redis, bus.NOTIFICATIONS, note)
+        return settled
+
+    async def snapshot_equity(self) -> None:
+        for acct in await db.paper_accounts(self.pool):
+            _, fills, orders = await paper.account_state(self.pool, acct["id"])
+            mkts = await db.markets_by_ids(self.pool, list({f["market_id"] for f in fills}))
+            s = paper.summarize(acct, fills, mkts, orders)
+            await db.snapshot_equity(self.pool, acct["id"], s["equity"], s["cash"])
+
+    async def paper_loop(self) -> None:
+        await asyncio.gather(*(e.wait() for e in self.catalog_ready.values()))
+        last_settle = datetime.min.replace(tzinfo=timezone.utc)
+        while not self._stop.is_set():
+            try:
+                await self.snapshot_equity()
+                if datetime.now(timezone.utc) - last_settle > timedelta(seconds=self.s.settle_interval_s):
+                    await self.settle()
+                    last_settle = datetime.now(timezone.utc)
+            except Exception:
+                log.exception("paper loop failed")
+            await self._sleep(self.s.equity_interval_s)
 
     # ------------------------------------------------------------ alerts
 
@@ -412,6 +468,7 @@ class Ingestor:
         tasks.append(asyncio.create_task(self.arb_loop(), name="arb"))
         tasks.append(asyncio.create_task(self.news_loop(), name="news"))
         tasks.append(asyncio.create_task(self.ai_loop(), name="ai"))
+        tasks.append(asyncio.create_task(self.paper_loop(), name="paper"))
         tasks.append(asyncio.create_task(self.backfill_request_loop(), name="backfill-requests"))
         await self._stop.wait()
         for t in tasks:
@@ -436,6 +493,7 @@ async def main() -> None:
         for a in adapters:
             await a.aclose()
         await ing.llm.aclose()
+        await ing.fetcher.aclose()
         await pool.close()
         await redis.aclose()
 

@@ -5,24 +5,25 @@ import { NewsSidebar } from "./components/NewsSidebar";
 import { useLive } from "./live";
 import { AiPicksPage } from "./pages/AiPicksPage";
 import { ArbitragePage } from "./pages/ArbitragePage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 import { MarketsPage } from "./pages/MarketsPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
-type Page = "markets" | "watchlist" | "arb" | "ai";
+type Page = "markets" | "watchlist" | "arb" | "ai" | "portfolio";
 
 const NAV: { id: Page | string; label: string; soon?: string }[] = [
   { id: "markets", label: "Markets" },
   { id: "watchlist", label: "Watchlist" },
   { id: "arb", label: "Arbitrage" },
   { id: "ai", label: "AI Picks" },
-  { id: "portfolio", label: "Portfolio", soon: "Sprint 3" },
-  { id: "sim", label: "Simulation", soon: "Sprint 3+" },
+  { id: "portfolio", label: "Portfolio" },
+  { id: "sim", label: "Simulation", soon: "Sprint 4" },
 ];
 
 export default function App() {
   const [page, setPage] = useState<Page>(() => {
     const h = location.hash.slice(1);
-    return h === "watchlist" || h === "arb" || h === "ai" ? h : "markets";
+    return h === "watchlist" || h === "arb" || h === "ai" || h === "portfolio" ? h : "markets";
   });
   const [meta, setMeta] = useState<Meta | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export default function App() {
   return (
     <div className="app">
       <div className="mode-band" role="status">
-        <span className="mode-dot" /> LIVE DATA · READ-ONLY — no orders can be placed from this app
+        <span className="mode-dot" /> LIVE DATA · NO REAL ORDERS — trading here is paper (fake money) only
       </div>
       <header className="topbar">
         <div className="brand">
@@ -121,6 +122,7 @@ export default function App() {
           {page === "watchlist" && <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />}
           {page === "arb" && <ArbitragePage onOpenMarket={(id) => setOpen(id)} />}
           {page === "ai" && <AiPicksPage onOpenMarket={(id) => setOpen(id)} />}
+          {page === "portfolio" && <PortfolioPage onOpenMarket={(id) => setOpen(id)} refreshKey={refreshKey} />}
         </main>
         {showNews && <NewsSidebar onOpenMarket={(id) => setOpen(id)} latest={lastNotification} />}
       </div>
@@ -196,7 +198,7 @@ function Toasts({ latest, onOpenMarket }: { latest: Notification | null; onOpenM
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
         <button key={t.id} className="toast" onClick={() => t.market_id && onOpenMarket(t.market_id)}>
-          <strong>{t.kind === "news" ? "News on a watched market" : "Price alert"}</strong>
+          <strong>{t.kind === "news" ? "News on a watched market" : t.kind === "paper" ? "Paper trade" : "Price alert"}</strong>
           <span>{t.message}</span>
         </button>
       ))}

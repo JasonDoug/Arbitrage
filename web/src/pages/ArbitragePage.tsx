@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { arbApi, cents, closesIn, venueLabel, type ArbItem, type Link, type LinkSide } from "../api";
+import { activeAccount, arbApi, cents, closesIn, paperApi, usd, venueLabel, type ArbItem, type Link, type LinkSide } from "../api";
 
 type Tab = "opportunities" | "review";
 
@@ -108,9 +108,12 @@ function Opportunities({
                 <th className="num">Cost</th>
                 <th className="num">Fees</th>
                 <th className="num">Net edge</th>
+                <th className="num" title="Contracts available while the edge stays positive, walking both order books">Max size</th>
+                <th className="num" title="Total edge in dollars at max size">$ edge</th>
                 <th className="num">Annualized</th>
                 <th className="num">Closes</th>
                 <th className="num">Open for</th>
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -135,7 +138,24 @@ function sinceLabel(iso: string | null) {
 
 function ArbRow({ o, onOpenMarket }: { o: ArbItem; onOpenMarket: (id: string) => void }) {
   const cls = o.edge > 0.0005 ? "pos" : o.edge < -0.0005 ? "neg" : "";
+  const [trading, setTrading] = useState(false);
+  const [qty, setQty] = useState(String(Math.max(1, Math.min(100, Math.floor(o.depth?.qty ?? 100)))));
+  const [msg, setMsg] = useState<string | null>(null);
+  const trade = async () => {
+    setMsg("Placing both legs…");
+    try {
+      let account = activeAccount.get();
+      if (!account) account = (await paperApi.accounts()).items[0]?.id ?? null;
+      if (!account) return setMsg("No paper account");
+      const r = await paperApi.arb({ account_id: account, link_id: o.link_id, direction: o.direction, qty: Number(qty) });
+      const legs = r.legs.map((l) => (l.error ? `${l.side}: ${l.error}` : `${l.side} ${l.fill_qty} @ ${cents(l.avg_price)}`)).join(" + ");
+      setMsg(`${r.warning ? "⚠ " + r.warning + " " : "Paper filled: "}${legs}`);
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
   return (
+    <>
     <tr>
       <td>
         <SideLine s={o.a} onOpen={onOpenMarket} />
@@ -158,10 +178,38 @@ function ArbRow({ o, onOpenMarket }: { o: ArbItem; onOpenMarket: (id: string) =>
       <td className={`num mono chg ${cls}`}>
         <strong>{cents(o.edge, 2)}</strong>
       </td>
+      <td className="num mono" title={o.depth?.source ? `depth from ${o.depth.source}` : o.depth?.error}>
+        {o.depth && !o.depth.error ? o.depth.qty.toLocaleString() : "—"}
+        {o.depth?.source && o.depth.source !== "book" && <sup>*</sup>}
+      </td>
+      <td className={`num mono chg ${cls}`}>{o.depth && !o.depth.error ? usd(o.depth.edge_dollars) : "—"}</td>
       <td className={`num mono chg ${cls}`}>{o.annualized === null ? "—" : `${(o.annualized * 100).toFixed(0)}%`}</td>
       <td className="num mono">{o.days_to_close === null ? "—" : `${Math.round(o.days_to_close)}d`}</td>
       <td className="num mono">{sinceLabel(o.first_seen)}</td>
+      <td>
+        {o.edge > 0 && (
+          <button className="btn small-btn" onClick={() => setTrading((t) => !t)}>
+            Paper trade
+          </button>
+        )}
+      </td>
     </tr>
+    {trading && (
+      <tr className="arb-trade-row">
+        <td colSpan={11}>
+          <span className="paper-tag">PAPER</span> Buy both legs as one trade:
+          <label className="cents-input">
+            qty <input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
+          </label>
+          <button className="btn primary" onClick={trade}>
+            Buy {o.legs.map((l) => `${l.side} ${venueLabel[l.venue] ?? l.venue}`).join(" + ")}
+          </button>
+          <span className="muted small">Leg A then leg B, each up to 2¢ past the quoted price; anything unfilled is cancelled.</span>
+          {msg && <div className="ticket-result">{msg}</div>}
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 

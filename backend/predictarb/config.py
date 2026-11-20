@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     ai_cache_minutes: int = 15
     match_llm_per_run: int = 20  # suggested links checked by the LLM per matcher run (0 = off)
 
+    # Paper trading
+    paper_starting_cash: float = 10_000
+    settle_interval_s: int = 600
+    equity_interval_s: int = 300
+
     catalog_interval_s: int = 600
     quote_interval_s: int = 20
     backfill_top_n: int = 150

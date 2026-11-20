@@ -26,6 +26,8 @@ class Quote(BaseModel):
     venue_market_id: str
     yes_bid: float | None = None
     yes_ask: float | None = None
+    yes_bid_size: float | None = None  # contracts at the best bid/ask, when the venue reports it
+    yes_ask_size: float | None = None
     last_price: float | None = None
     change_24h: float | None = None  # absolute change in probability
     volume_24h: float | None = None  # in the venue's native unit (see Market.volume_unit)

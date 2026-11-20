@@ -117,6 +117,7 @@ export type Link = {
 export type ArbLeg = { venue: string; market_id: string; side: "YES" | "NO"; price: number; fee: number };
 
 export type ArbItem = {
+  depth: { qty: number; edge_dollars: number; avg_cost: number | null; source: string; error?: string } | null;
   link_id: number;
   direction: string;
   legs: ArbLeg[];
@@ -192,6 +193,72 @@ export const aiApi = {
   analysis: (id: string, batchId?: number) =>
     req<AiStatus & { analysis: Analysis | null; batch: AiBatch | null }>(`/api/ai/analysis/${enc(id)}${batchId ? `?batch_id=${batchId}` : ""}`),
 };
+
+export type Book = { market_id: string; source: "book" | "top_of_book" | "demo"; yes_bids: [number, number][]; yes_asks: [number, number][] };
+export type PaperAccount = { id: number; name: string; starting_cash: number; created_at: string; reset_at: string | null; equity?: number; total_pnl?: number; return_pct?: number | null };
+export type OrderIn = { account_id: number; market_id: string; side: "YES" | "NO"; action: "buy" | "sell"; type: "market" | "limit"; qty: number; limit_price?: number | null };
+export type OrderPlan = {
+  ok?: boolean; error?: string; fill_qty: number; avg_price: number | null; fee: number; cost: number | null; proceeds: number | null;
+  rest_qty: number; unfilled_cancelled: number; limit_used: number | null; max_loss: number | null; max_payout: number | null;
+  position_after: number; book_source: string; order_id?: number; status?: string;
+};
+export type PaperPosition = {
+  market_id: string; side: "YES" | "NO"; qty: number; avg_cost: number; mark: number | null; exit_price: number | null; value: number;
+  unrealized: number | null; realized: number; opened_at: string; title: string; outcome_label: string | null; venue: string;
+  close_ts: string | null; status: string; result: string | null;
+};
+export type PaperOrder = {
+  id: number; market_id: string; side: string; action: string; type: string; qty: number; limit_price: number | null; filled_qty: number;
+  avg_price: number | null; fees: number; status: string; reason: string | null; group_id: string | null; created_at: string; title: string; outcome_label: string | null; venue: string;
+};
+export type PaperFill = { id: number; order_id: number | null; market_id: string; side: string; action: string; qty: number; price: number; fee: number; liquidity: string; ts: string; title: string; outcome_label: string | null; venue: string; group_id: string | null };
+export type Portfolio = {
+  account: PaperAccount;
+  summary: {
+    cash: number; available_cash: number; reserved_cash: number; positions_value: number; equity: number; starting_cash: number; total_pnl: number;
+    return_pct: number | null; realized: number; unrealized: number; fees: number; closed_positions: number; win_rate: number | null; positions: PaperPosition[];
+  };
+  max_drawdown_pct: number | null;
+  open_orders: PaperOrder[];
+  orders: PaperOrder[];
+  fills: PaperFill[];
+  equity_curve: { ts: string; equity: number }[];
+};
+
+export const paperApi = {
+  book: (id: string) => req<Book>(`/api/markets/${enc(id)}/book`),
+  accounts: () => req<{ items: PaperAccount[] }>("/api/paper/accounts"),
+  createAccount: (name: string, starting_cash: number) => req<PaperAccount>("/api/paper/accounts", { method: "POST", body: JSON.stringify({ name, starting_cash }) }),
+  reset: (id: number) => req<PaperAccount>(`/api/paper/accounts/${id}/reset`, { method: "POST" }),
+  preview: (o: OrderIn) => req<OrderPlan>("/api/paper/preview", { method: "POST", body: JSON.stringify(o) }),
+  place: (o: OrderIn) => req<OrderPlan>("/api/paper/orders", { method: "POST", body: JSON.stringify(o) }),
+  cancel: (accountId: number, orderId: number) => req(`/api/paper/orders/${orderId}?account_id=${accountId}`, { method: "DELETE" }),
+  portfolio: (accountId: number, mark: "mid" | "exit") => req<Portfolio>(`/api/paper/portfolio?account_id=${accountId}&mark=${mark}`),
+  arb: (body: { account_id: number; link_id: number; direction: string; qty: number }) =>
+    req<{ group_id: string; legs: (OrderPlan & { market_id: string; side: string; error?: string })[]; warning: string | null }>("/api/paper/arb", { method: "POST", body: JSON.stringify(body) }),
+};
+
+/** The paper account the ticket and Portfolio tab use, remembered per browser. */
+export const activeAccount = {
+  get: (): number | null => {
+    try {
+      const v = localStorage.getItem("paperAccount");
+      return v ? Number(v) : null;
+    } catch {
+      return null;
+    }
+  },
+  set: (id: number) => {
+    try {
+      localStorage.setItem("paperAccount", String(id));
+    } catch {
+      /* in-memory only */
+    }
+  },
+};
+
+export const usd = (n: number | null | undefined, digits = 2) =>
+  n === null || n === undefined ? "—" : `${n < 0 ? "−" : ""}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 
 export const arbApi = {
   links: (p: { status?: string; q?: string; limit?: number; offset?: number }) => {

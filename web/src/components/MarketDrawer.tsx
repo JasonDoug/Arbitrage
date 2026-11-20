@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { aiApi, api, cents, closesIn, compact, newsApi, signedCents, venueLabel, type AlertKind, type HistoryPoint, type Market, type NewsItem, type Analysis, type AiBatch } from "../api";
 import { AnalysisBody, RecBadge } from "./AnalysisView";
+import { TradePanel } from "./TradeTicket";
 import { NewsRow } from "./NewsSidebar";
 import { useLiveMarket } from "../live";
 import { PriceChart } from "./PriceChart";
@@ -161,6 +162,8 @@ function DrawerBody({
           <div className="chart-empty">{loadingHistory ? "Loading history…" : "No history yet. Prices are recorded as they change, and older history is fetched from the venue."}</div>
         )}
       </section>
+
+      {m.status === "open" && <TradePanel market={m} onFilled={onChanged} />}
 
       <AiSection marketId={m.id} />
 
