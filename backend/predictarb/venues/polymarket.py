@@ -14,11 +14,15 @@ from typing import Any
 from predictarb.categories import categorize
 from predictarb.config import Settings
 from predictarb.models import Market, PricePoint, Quote
-from predictarb.venues.base import HttpVenue, VenueAdapter, parse_ts, to_float, to_prob
+from predictarb.venues.base import HttpVenue, VenueAdapter, VenueError, parse_ts, to_float, to_prob
 
 log = logging.getLogger(__name__)
 
-PAGE = 500
+# Gamma caps page size (100 at time of writing); we page by whatever it returns.
+PAGE = 100
+# prices-history rejects long startTs/endTs spans; fetch in windows and shrink on rejection.
+HISTORY_WINDOW = timedelta(days=7)
+MIN_HISTORY_WINDOW = timedelta(hours=12)
 
 
 def _json_list(v: Any) -> list[Any]:
@@ -121,10 +125,8 @@ class PolymarketAdapter(VenueAdapter):
             if not isinstance(batch, list) or not batch:
                 break
             rows.extend(batch)
-            if len(batch) < PAGE:
-                break
-            offset += PAGE
-        return rows
+            offset += len(batch)
+        return rows[: self.settings.polymarket_max_markets]
 
     async def fetch_markets(self) -> list[Market]:
         now = datetime.now(timezone.utc)
@@ -148,17 +150,28 @@ class PolymarketAdapter(VenueAdapter):
             return []
         end = datetime.now(timezone.utc)
         start = end - timedelta(days=days)
-        data = await self.http.get_json(
-            "/prices-history",
-            {"market": tokens[0], "startTs": int(start.timestamp()), "endTs": int(end.timestamp()), "fidelity": 60},
-            base=self.settings.polymarket_clob_url,
-        )
-        points = []
-        for h in (data or {}).get("history") or []:
-            ts, p = parse_ts(h.get("t")), to_prob(h.get("p"))
-            if ts is not None and p is not None:
-                points.append(PricePoint(ts=ts, price=p))
-        return points
+        window = HISTORY_WINDOW
+        seen: dict[datetime, PricePoint] = {}
+        cursor = start
+        while cursor < end:
+            chunk_end = min(cursor + window, end)
+            try:
+                data = await self.http.get_json(
+                    "/prices-history",
+                    {"market": tokens[0], "startTs": int(cursor.timestamp()), "endTs": int(chunk_end.timestamp()), "fidelity": 60},
+                    base=self.settings.polymarket_clob_url,
+                )
+            except VenueError as e:
+                if "too long" in str(e) and window > MIN_HISTORY_WINDOW:
+                    window = window / 2
+                    continue
+                raise
+            for h in (data or {}).get("history") or []:
+                ts, p = parse_ts(h.get("t")), to_prob(h.get("p"))
+                if ts is not None and p is not None:
+                    seen[ts] = PricePoint(ts=ts, price=p)
+            cursor = chunk_end
+        return [seen[t] for t in sorted(seen)]
 
     async def aclose(self) -> None:
         await self.http.aclose()

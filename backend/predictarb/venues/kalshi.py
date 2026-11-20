@@ -94,6 +94,7 @@ class KalshiAdapter(VenueAdapter):
         self.settings = settings
         self.http = http or HttpVenue(settings.kalshi_base_url, rate_per_s=8)
         self._series_category: dict[str, str] = {}
+        self._tracked: list[str] = []
 
     async def _load_series_categories(self) -> None:
         """Series carry the category; events' own category field is deprecated."""
@@ -128,9 +129,25 @@ class KalshiAdapter(VenueAdapter):
             cursor = data.get("cursor")
             if not cursor:
                 break
-        return out
+        kept = select_active(out, self.settings.kalshi_max_markets)
+        log.info("kalshi: %d open markets listed, tracking %d with trading activity", len(out), len(kept))
+        self._tracked = [m.venue_market_id for m in kept]
+        return kept
 
     async def fetch_quotes(self) -> list[Quote]:
+        """Poll only tracked tickers (a few dozen requests) instead of scanning every open market."""
+        if not self._tracked:
+            return await self._scan_quotes()
+        now = datetime.now(timezone.utc)
+        out: list[Quote] = []
+        size = self.settings.kalshi_quote_batch
+        for i in range(0, len(self._tracked), size):
+            batch = self._tracked[i : i + size]
+            data = await self.http.get_json("/markets", {"tickers": ",".join(batch), "limit": len(batch)})
+            out.extend(parse_quote(m, now) for m in data.get("markets") or [] if m.get("ticker"))
+        return out
+
+    async def _scan_quotes(self) -> list[Quote]:
         now = datetime.now(timezone.utc)
         out: list[Quote] = []
         cursor: str | None = None
@@ -164,6 +181,19 @@ class KalshiAdapter(VenueAdapter):
 
     async def aclose(self) -> None:
         await self.http.aclose()
+
+
+def select_active(markets: list[Market], limit: int) -> list[Market]:
+    """Markets with 24h volume or open interest, highest 24h dollar volume first."""
+    def active(m: Market) -> bool:
+        q = m.quote
+        return q is not None and bool((q.volume_24h or 0) > 0 or (q.open_interest or 0) > 0)
+
+    def key(m: Market) -> tuple[float, float]:
+        q = m.quote
+        return (q.volume_24h_usd or 0.0, q.open_interest or 0.0) if q else (0.0, 0.0)
+
+    return sorted((m for m in markets if active(m)), key=key, reverse=True)[:limit]
 
 
 def parse_candles(candles: list[dict[str, Any]]) -> list[PricePoint]:

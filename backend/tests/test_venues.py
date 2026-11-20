@@ -4,7 +4,7 @@ import respx
 
 from predictarb.config import Settings
 from predictarb.venues.base import HttpVenue, VenueError
-from predictarb.venues.kalshi import KalshiAdapter, parse_candles
+from predictarb.venues.kalshi import KalshiAdapter, parse_candles, parse_quote
 from predictarb.venues.polymarket import PolymarketAdapter
 
 K = "https://kalshi.test/trade-api/v2"
@@ -41,7 +41,8 @@ async def test_kalshi_catalog(settings, fixture):
     assert q.change_24h == pytest.approx(0.04)
     assert q.volume_24h_usd == pytest.approx(12000 * 0.62)
 
-    cut = by_id["KXFEDDECISION-26DEC-C25"].quote
+    assert "KXFEDDECISION-26DEC-C25" not in by_id, "no volume and no open interest -> not tracked"
+    cut = parse_quote(fixture("kalshi_events.json")["events"][0]["markets"][1])
     assert cut.yes_bid is None and cut.yes_ask is None and cut.last_price is None, "empty book -> None"
 
     lv = by_id["KXHIGHLV-26NOV21-B70"]
@@ -56,6 +57,25 @@ async def test_kalshi_series_failure_falls_back(settings, fixture):
     markets = await KalshiAdapter(settings).fetch_markets()
     lv = next(m for m in markets if m.venue_market_id == "KXHIGHLV-26NOV21-B70")
     assert lv.category == "Weather", "title keyword fallback"
+
+
+@respx.mock
+async def test_kalshi_tracks_top_active_and_polls_by_ticker(settings, fixture):
+    events = fixture("kalshi_events.json")
+    respx.get(f"{K}/series").respond(json=fixture("kalshi_series.json"))
+    respx.get(f"{K}/events").respond(json=events)
+    settings.kalshi_max_markets = 1
+    settings.kalshi_quote_batch = 1
+    adapter = KalshiAdapter(settings)
+    markets = await adapter.fetch_markets()
+    assert [m.venue_market_id for m in markets] == ["KXFEDDECISION-26DEC-H0"], "highest 24h $ volume wins the cap"
+
+    settings.kalshi_max_markets = 10
+    markets = await adapter.fetch_markets()
+    assert [m.venue_market_id for m in markets] == ["KXFEDDECISION-26DEC-H0", "KXHIGHLV-26NOV21-B70"]
+    route = respx.get(f"{K}/markets").respond(json={"markets": [events["events"][0]["markets"][0]], "cursor": ""})
+    await adapter.fetch_quotes()
+    assert [c.request.url.params["tickers"] for c in route.calls] == ["KXFEDDECISION-26DEC-H0", "KXHIGHLV-26NOV21-B70"]
 
 
 @respx.mock
@@ -80,7 +100,8 @@ def test_kalshi_candles(fixture):
 
 @respx.mock
 async def test_polymarket_catalog(settings, fixture):
-    route = respx.get(f"{G}/markets").respond(json=fixture("polymarket_markets.json"))
+    route = respx.get(f"{G}/markets")
+    route.side_effect = [httpx.Response(200, json=fixture("polymarket_markets.json")), httpx.Response(200, json=[])]
     markets = await PolymarketAdapter(settings).fetch_markets()
     assert [m.venue_market_id for m in markets] == ["512345", "512999"], "closed and AMM-only markets dropped"
     btc, vgk = markets
@@ -97,13 +118,41 @@ async def test_polymarket_catalog(settings, fixture):
 
 
 @respx.mock
-async def test_polymarket_history(settings, fixture):
-    route = respx.get(f"{C}/prices-history").respond(json=fixture("polymarket_history.json"))
+async def test_polymarket_paginates_by_returned_page_size(settings, fixture):
+    rows = fixture("polymarket_markets.json")[:2]
+    page = [dict(rows[0], id=str(i)) for i in range(100)]
+    route = respx.get(f"{G}/markets")
+    route.side_effect = [httpx.Response(200, json=page), httpx.Response(200, json=[dict(rows[1], id="x")]), httpx.Response(200, json=[])]
+    markets = await PolymarketAdapter(settings).fetch_markets()
+    assert len(markets) == 101, "a full 100-row page is not the last page"
+    assert [c.request.url.params["offset"] for c in route.calls] == ["0", "100", "101"]
+
+
+@respx.mock
+async def test_polymarket_history_windows_and_shrinks(settings, fixture, monkeypatch):
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr("predictarb.venues.base.asyncio.sleep", no_sleep)
+    calls = []
+
+    def handler(request):
+        p = request.url.params
+        span = int(p["endTs"]) - int(p["startTs"])
+        calls.append(span)
+        if span > 3 * 86400:
+            return httpx.Response(400, json={"error": "invalid filters: 'startTs' and 'endTs' interval is too long"})
+        return httpx.Response(200, json={"history": [{"t": int(p["startTs"]), "p": 0.4}, {"t": int(p["endTs"]), "p": 0.41}]})
+
+    respx.get(f"{C}/prices-history").mock(side_effect=handler)
     pts = await PolymarketAdapter(settings).fetch_history(
-        {"venue_market_id": "512345", "extra": {"clob_token_ids": ["111", "222"]}}, days=30
+        {"venue_market_id": "512345", "extra": {"clob_token_ids": ["111", "222"]}}, days=10
     )
-    assert [p.price for p in pts] == [0.4, 0.41, 0.415]
-    assert route.calls[0].request.url.params["market"] == "111"
+    assert calls[0] == 7 * 86400 and calls[1] == int(3.5 * 86400) and calls[2] == int(1.75 * 86400)
+    assert max(c for c in calls[2:]) <= 3 * 86400
+    ts = [p.ts for p in pts]
+    assert ts == sorted(ts) and len(ts) == len(set(ts)), "chunk boundaries are de-duplicated"
+    assert pts[0].price == 0.4
 
 
 @respx.mock

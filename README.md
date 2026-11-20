@@ -13,7 +13,7 @@ A self-hosted prediction-market terminal. It pulls live markets from **Kalshi** 
 ## Quick start
 
 ```bash
-git clone git@github.com:JasonDoug/Arbitrage.git && cd Arbitrage && cp .env.example .env && docker compose up -d --build
+gh repo clone JasonDoug/Arbitrage && cd Arbitrage && cp .env.example .env && docker compose up -d --build
 ```
 
 Open <http://localhost:8080>. The catalog fills within a minute or two; history for the top 150 markets backfills in the background.
@@ -56,8 +56,8 @@ Polymarket┘        │                         │
 
 ### Venue notes
 
-- **Kalshi:** prices are dollar strings (`"0.5600"`), so 24h dollar volume is estimated as contracts × price. Multivariate combo markets are excluded by default (`KALSHI_EXCLUDE_MVE`).
-- **Polymarket (global):** used as a price signal only, since trading there is geoblocked for US users. Only order-book markets are ingested, the top `POLYMARKET_MAX_MARKETS` by 24h volume.
+- **Kalshi:** prices are dollar strings (`"0.5600"`), so 24h dollar volume is estimated as contracts × price. Kalshi lists about 200k open markets, mostly untraded strike ladders, so only markets with 24h volume or open interest are tracked: the top `KALSHI_MAX_MARKETS` by 24h dollar volume. Quotes are then polled by ticker in batches rather than by scanning every market. Multivariate combo markets are excluded (`KALSHI_EXCLUDE_MVE`).
+- **Polymarket (global):** used as a price signal only, since trading there is geoblocked for US users. Only order-book markets are ingested, the top `POLYMARKET_MAX_MARKETS` by 24h volume. Gamma returns at most 100 rows per page, and `prices-history` rejects long time spans, so history is fetched in 7-day windows that shrink automatically if the API rejects them.
 - **Jurisdiction:** some Kalshi categories are restricted in Nevada while litigation continues. Sprint 1 never trades, so nothing is gated yet; the jurisdiction gate arrives with live trading.
 
 ## Configuration

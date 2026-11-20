@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     polymarket_max_markets: int = 3000
     # Kalshi: skip multivariate combo markets (parlays) by default.
     kalshi_exclude_mve: bool = True
+    # Kalshi lists ~200k open markets, mostly untraded strike ladders. Keep only markets
+    # with trading activity (24h volume or open interest), top N by 24h dollar volume.
+    kalshi_max_markets: int = 5000
+    # Tickers per quote request when polling only the tracked markets.
+    kalshi_quote_batch: int = 100
 
     catalog_interval_s: int = 600
     quote_interval_s: int = 20
