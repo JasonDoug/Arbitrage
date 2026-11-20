@@ -12,9 +12,15 @@ const SORT_LABEL: Record<string, string> = {
 };
 const PAGE = 60;
 
-type Props = { meta: Meta | null; onOpen: (m: Market) => void; refreshKey: number };
+type Props = {
+  meta: Meta | null;
+  onOpen: (m: Market) => void;
+  refreshKey: number;
+  contested: boolean;
+  setContested: (v: boolean) => void;
+};
 
-export function MarketsPage({ meta, onOpen, refreshKey }: Props) {
+export function MarketsPage({ meta, onOpen, refreshKey, contested, setContested }: Props) {
   const [category, setCategory] = useState("");
   const [venue, setVenue] = useState("");
   const [sort, setSort] = useState("volume");
@@ -36,7 +42,7 @@ export function MarketsPage({ meta, onOpen, refreshKey }: Props) {
       const id = ++reqId.current;
       setLoading(true);
       try {
-        const res = await api.markets({ category, venue, q: query, sort, limit: PAGE, offset });
+        const res = await api.markets({ category, venue, q: query, sort, limit: PAGE, offset, contested });
         if (id !== reqId.current) return;
         setTotal(res.total);
         setItems((prev) => (offset === 0 ? res.items : [...prev, ...res.items]));
@@ -47,7 +53,7 @@ export function MarketsPage({ meta, onOpen, refreshKey }: Props) {
         if (id === reqId.current) setLoading(false);
       }
     },
-    [category, venue, query, sort],
+    [category, venue, query, sort, contested],
   );
 
   useEffect(() => {
@@ -85,6 +91,10 @@ export function MarketsPage({ meta, onOpen, refreshKey }: Props) {
               </option>
             ))}
           </select>
+          <label className="toggle" title="Hide markets priced below 3¢ or above 97¢: the crowd already treats them as decided">
+            <input type="checkbox" checked={contested} onChange={(e) => setContested(e.target.checked)} />
+            Hide near-certain
+          </label>
           <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort by">
             {(meta?.sorts ?? Object.keys(SORT_LABEL)).map((s) => (
               <option key={s} value={s}>

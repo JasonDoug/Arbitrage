@@ -75,8 +75,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 
 export const api = {
-  meta: () => req<Meta>("/api/meta"),
-  markets: (p: { category?: string; venue?: string; q?: string; sort?: string; limit?: number; offset?: number }) => {
+  meta: (contested = false) => req<Meta>(`/api/meta?contested=${contested}`),
+  markets: (p: { category?: string; venue?: string; q?: string; sort?: string; limit?: number; offset?: number; contested?: boolean }) => {
     const qs = new URLSearchParams();
     Object.entries(p).forEach(([k, v]) => v !== undefined && v !== "" && qs.set(k, String(v)));
     return req<{ total: number; items: Market[] }>(`/api/markets?${qs}`);
@@ -96,7 +96,13 @@ export const api = {
 
 // ---- formatting
 
-export const cents = (p: number | null | undefined, digits = 1) => (p === null || p === undefined ? "—" : `${(p * 100).toFixed(digits)}¢`);
+/** Price in cents. Below 1¢ / above 99¢ always show a decimal so 0.4¢ isn't rounded to "0¢". */
+export const cents = (p: number | null | undefined, digits = 1) => {
+  if (p === null || p === undefined) return "—";
+  const c = p * 100;
+  const d = digits === 0 && c > 0 && c < 100 && (c < 1 || c > 99 || Math.abs(c - Math.round(c)) >= 0.05) ? 1 : digits;
+  return `${c.toFixed(d)}¢`;
+};
 
 export const signedCents = (d: number | null | undefined) => {
   if (d === null || d === undefined || Math.abs(d) < 0.0005) return "0.0¢";

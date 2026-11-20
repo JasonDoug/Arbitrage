@@ -72,6 +72,12 @@ async def test_ingest_alerts_and_api(clean_db):
         assert crypto["total"] > 0 and all(i["category"] == "Crypto" for i in crypto["items"])
         search = client.get("/api/markets", params={"q": "Bitcoin"}).json()
         assert search["total"] > 0 and all("Bitcoin" in i["title"] for i in search["items"])
+        await_pool_mid = client.get("/api/markets", params={"limit": 200}).json()["items"]
+        decided = [i for i in await_pool_mid if i["mid"] is not None and not 0.03 <= i["mid"] <= 0.97]
+        contested = client.get("/api/markets", params={"limit": 200, "contested": "true"}).json()
+        assert contested["total"] == page["total"] - len(decided)
+        assert all(i["mid"] is None or 0.03 <= i["mid"] <= 0.97 for i in contested["items"])
+        assert sum(client.get("/api/meta", params={"contested": "true"}).json()["category_counts"].values()) == contested["total"]
         for s in db.SORTS:
             assert client.get("/api/markets", params={"sort": s}).status_code == 200
 

@@ -47,7 +47,7 @@ export function MarketCard({ market, onOpen, onToggleWatch }: Props) {
       </div>
       <footer className="card-foot">
         <span title="24h volume (USD; Kalshi estimated from contracts × price)">Vol {compact(volume, "$")}</span>
-        <span title="Bid–ask spread">Spr {cents(m.spread, 0)}</span>
+        <span title="Bid–ask spread">Spr {cents(m.spread)}</span>
         <span title={m.close_ts ? new Date(m.close_ts).toLocaleString() : ""}>Closes {closesIn(m.close_ts)}</span>
       </footer>
     </article>

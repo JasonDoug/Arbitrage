@@ -100,12 +100,12 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/api/meta")
-async def meta() -> dict[str, Any]:
+async def meta(contested: bool = False) -> dict[str, Any]:
     return {
         "mode": "live",
         "read_only": True,
         "categories": CATEGORIES,
-        "category_counts": await db.category_counts(_pool()),
+        "category_counts": await db.category_counts(_pool(), contested),
         "venues": await db.list_venues(_pool()),
         "sorts": list(db.SORTS),
     }
@@ -122,9 +122,10 @@ async def markets(
     limit: int = Query(60, ge=1, le=200),
     offset: int = Query(0, ge=0),
     spark: bool = True,
+    contested: bool = False,
 ) -> dict[str, Any]:
     rows, total = await db.list_markets(
-        _pool(), category=category, venue=venue, q=q, sort=sort, limit=limit, offset=offset
+        _pool(), category=category, venue=venue, q=q, sort=sort, limit=limit, offset=offset, contested=contested
     )
     if spark:
         lines = await db.sparklines(_pool(), [r["id"] for r in rows])

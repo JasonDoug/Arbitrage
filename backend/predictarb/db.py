@@ -19,6 +19,8 @@ SORTS = {
     "newest": "m.first_seen DESC",
 }
 
+CONTESTED_LOW, CONTESTED_HIGH = 0.03, 0.97
+
 MARKET_COLUMNS = """
     id, venue, venue_market_id, event_id, event_title, title, outcome_label, url, category, tags,
     rules_text, resolution_source, close_ts, status, volume_unit, total_volume, extra,
@@ -217,9 +219,13 @@ async def list_markets(
     limit: int = 60,
     offset: int = 0,
     user_id: str = "me",
+    contested: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     where = ["m.status = $1"]
     args: list[Any] = [status]
+    if contested:
+        # Hide markets the crowd already treats as decided (<3c or >97c); keep unpriced ones.
+        where.append(f"(m.mid IS NULL OR m.mid BETWEEN {CONTESTED_LOW} AND {CONTESTED_HIGH})")
     if category:
         args.append(category)
         where.append(f"m.category = ${len(args)}")
@@ -248,13 +254,9 @@ async def list_markets(
     return [dict(r) for r in rows], int(total)
 
 
-async def category_counts(pool: asyncpg.Pool, venue: str | None = None) -> dict[str, int]:
-    if venue:
-        rows = await pool.fetch(
-            "SELECT category, count(*) n FROM market WHERE status='open' AND venue=$1 GROUP BY category", venue
-        )
-    else:
-        rows = await pool.fetch("SELECT category, count(*) n FROM market WHERE status='open' GROUP BY category")
+async def category_counts(pool: asyncpg.Pool, contested: bool = False) -> dict[str, int]:
+    extra = f" AND (mid IS NULL OR mid BETWEEN {CONTESTED_LOW} AND {CONTESTED_HIGH})" if contested else ""
+    rows = await pool.fetch(f"SELECT category, count(*) n FROM market WHERE status='open'{extra} GROUP BY category")
     return {r["category"]: r["n"] for r in rows}
 
 

@@ -21,14 +21,29 @@ export default function App() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [contested, setContestedState] = useState(() => {
+    try {
+      return localStorage.getItem("hideNearCertain") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setContested = (v: boolean) => {
+    setContestedState(v);
+    try {
+      localStorage.setItem("hideNearCertain", v ? "1" : "0");
+    } catch {
+      /* storage unavailable: keep in memory only */
+    }
+  };
   const { connected, lastNotification } = useLive();
 
   useEffect(() => {
-    const load = () => api.meta().then(setMeta).catch(() => undefined);
+    const load = () => api.meta(contested).then(setMeta).catch(() => undefined);
     load();
     const t = window.setInterval(load, 60000);
     return () => window.clearInterval(t);
-  }, []);
+  }, [contested]);
 
   useEffect(() => {
     location.hash = page === "watchlist" ? "watchlist" : "";
@@ -75,7 +90,7 @@ export default function App() {
         </nav>
         <main>
           {page === "markets" ? (
-            <MarketsPage meta={meta} onOpen={onOpen} refreshKey={refreshKey} />
+            <MarketsPage meta={meta} onOpen={onOpen} refreshKey={refreshKey} contested={contested} setContested={setContested} />
           ) : (
             <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />
           )}

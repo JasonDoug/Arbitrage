@@ -69,6 +69,8 @@ main { flex: 1; min-width: 0; }
 .search, select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
 .search { flex: 1; min-width: 220px; max-width: 420px; }
 .search:focus, select:focus, .chip:focus-visible, .card:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; user-select: none; }
+.toggle input { accent-color: var(--accent); margin: 0; }
 .result-count { font: 12px var(--mono); color: var(--muted); margin: 4px 0 12px; }
 .empty, .loading { color: var(--muted); padding: 48px 0; text-align: center; }
 .error { color: var(--neg); background: rgba(255, 107, 107, 0.08); border: 1px solid rgba(255, 107, 107, 0.3); padding: 8px 12px; border-radius: 8px; margin: 8px 0; }
