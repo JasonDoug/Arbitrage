@@ -1,4 +1,4 @@
-import { cents, closesIn, compact, signedCents, venueLabel, type Market } from "../api";
+import { cents, closeLabel, compact, signedCents, sparkValues, venueLabel, type Market } from "../api";
 import { useLiveMarket } from "../live";
 import { Sparkline } from "./Sparkline";
 
@@ -41,14 +41,14 @@ export function MarketCard({ market, onOpen, onToggleWatch }: Props) {
           <div className="price-label">YES</div>
         </div>
         <div className="card-trend">
-          <Sparkline values={m.sparkline ?? []} />
+          <Sparkline values={sparkValues(m)} />
           <span className={`chg ${ch > 0.0005 ? "pos" : ch < -0.0005 ? "neg" : ""}`}>{signedCents(m.change_24h)} 24h</span>
         </div>
       </div>
       <footer className="card-foot">
         <span title="24h volume (USD; Kalshi estimated from contracts × price)">Vol {compact(volume, "$")}</span>
         <span title="Bid–ask spread">Spr {cents(m.spread)}</span>
-        <span title={m.close_ts ? new Date(m.close_ts).toLocaleString() : ""}>Closes {closesIn(m.close_ts)}</span>
+        <span title={m.close_ts ? `Scheduled end: ${new Date(m.close_ts).toLocaleString()}` : ""}>{closeLabel(m.close_ts)}</span>
       </footer>
     </article>
   );

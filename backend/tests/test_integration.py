@@ -51,6 +51,7 @@ async def test_ingest_alerts_and_api(clean_db):
         adapter.rows = adapter.rows[1:]
         await ing.sync_catalog(adapter)
         assert await pool.fetchval("SELECT status FROM market WHERE id=$1", target) == "unlisted"
+        await pool.execute("UPDATE market SET close_ts = now() - interval '1 day' WHERE id='demo:DEMO-005'")
     finally:
         await pool.close()
         await redis.aclose()
@@ -78,6 +79,11 @@ async def test_ingest_alerts_and_api(clean_db):
         assert contested["total"] == page["total"] - len(decided)
         assert all(i["mid"] is None or 0.03 <= i["mid"] <= 0.97 for i in contested["items"])
         assert sum(client.get("/api/meta", params={"contested": "true"}).json()["category_counts"].values()) == contested["total"]
+        # "Closing soon": upcoming end dates first, past-due (still trading) after them.
+        closing = client.get("/api/markets", params={"limit": 200, "sort": "closing"}).json()["items"]
+        assert closing[-1]["id"] == "demo:DEMO-005", "past end date sorts after upcoming ones"
+        upcoming = [i["close_ts"] for i in closing[:-1]]
+        assert upcoming == sorted(upcoming)
         for s in db.SORTS:
             assert client.get("/api/markets", params={"sort": s}).status_code == 200
 

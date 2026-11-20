@@ -129,4 +129,17 @@ export const closesIn = (iso: string | null) => {
   return d < 60 ? `${Math.round(d)}d` : `${Math.round(d / 30)}mo`;
 };
 
+/** Footer label: "Closes 3h", or "Past end date" for markets still trading after their scheduled end. */
+export const closeLabel = (iso: string | null) => {
+  const c = closesIn(iso);
+  return c === "closed" ? "Past end date" : `Closes ${c}`;
+};
+
+/** Hourly closes when we have them; otherwise a two-point line from the venue's 24h change. */
+export const sparkValues = (m: { sparkline?: number[]; mid: number | null; change_24h: number | null }) => {
+  if (m.sparkline && m.sparkline.length >= 2) return m.sparkline;
+  if (m.mid !== null && m.change_24h !== null) return [Math.min(1, Math.max(0, m.mid - m.change_24h)), m.mid];
+  return [];
+};
+
 export const venueLabel: Record<string, string> = { kalshi: "Kalshi", polymarket: "Polymarket", polymarket_us: "Poly US", demo: "Demo" };

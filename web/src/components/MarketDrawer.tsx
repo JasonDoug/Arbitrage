@@ -136,7 +136,10 @@ function DrawerBody({
         <Stat label="24h volume" value={m.volume_unit === "contracts" ? `${compact(m.volume_24h)} ct` : compact(m.volume_24h_usd, "$")} />
         <Stat label="Total volume" value={m.volume_unit === "contracts" ? `${compact(m.total_volume)} ct` : compact(m.total_volume, "$")} />
         <Stat label={m.venue === "kalshi" ? "Open interest" : "Liquidity"} value={m.venue === "kalshi" ? `${compact(m.open_interest)} ct` : compact(m.liquidity_usd, "$")} />
-        <Stat label="Closes" value={m.close_ts ? `${new Date(m.close_ts).toLocaleDateString()} (${closesIn(m.close_ts)})` : "—"} />
+        <Stat
+          label="Scheduled end"
+          value={m.close_ts ? `${new Date(m.close_ts).toLocaleDateString()} (${closesIn(m.close_ts) === "closed" ? "passed, still trading" : closesIn(m.close_ts)})` : "—"}
+        />
       </dl>
 
       <section className="panel">

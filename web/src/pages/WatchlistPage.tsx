@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, cents, closesIn, signedCents, venueLabel, type Market } from "../api";
+import { api, cents, closesIn, signedCents, sparkValues, venueLabel, type Market } from "../api";
 import { Sparkline } from "../components/Sparkline";
 import { useLiveMarket } from "../live";
 
@@ -75,10 +75,10 @@ function Row({ market, onOpen, onRemove }: { market: Market; onOpen: (m: Market)
       <td className={`num mono chg ${cls(since)}`}>{since === null ? "—" : signedCents(since)}</td>
       <td className={`num mono chg ${cls(m.change_24h)}`}>{signedCents(m.change_24h)}</td>
       <td>
-        <Sparkline values={m.sparkline ?? []} width={80} height={24} />
+        <Sparkline values={sparkValues(m)} width={80} height={24} />
       </td>
       <td>{rules.length ? `${rules.length} active` : <span className="muted">none</span>}</td>
-      <td className="num mono">{closesIn(m.close_ts)}</td>
+      <td className="num mono">{closesIn(m.close_ts) === "closed" ? "past end" : closesIn(m.close_ts)}</td>
       <td>
         <button
           className="link"

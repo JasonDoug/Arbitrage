@@ -13,7 +13,9 @@ from predictarb.models import Market, PricePoint, Quote
 SORTS = {
     "volume": "m.volume_24h_usd DESC NULLS LAST",
     "change": "abs(m.change_24h) DESC NULLS LAST",
-    "closing": "m.close_ts ASC NULLS LAST",
+    # Upcoming end dates first; markets past their end date (still trading, awaiting
+    # resolution) go after them, then markets with no end date.
+    "closing": "(m.close_ts < now()) ASC NULLS LAST, m.close_ts ASC NULLS LAST",
     "spread": "m.spread ASC NULLS LAST",
     "liquidity": "m.liquidity_usd DESC NULLS LAST",
     "newest": "m.first_seen DESC",
