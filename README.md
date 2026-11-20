@@ -39,6 +39,17 @@ To try it with no network access (fake markets with random-walk prices), set `VE
 | Web UI | Markets tab (category chips, venue filter, search, 6 sorts, live-updating cards with sparklines), detail drawer (stats, chart, rules, alerts), Watchlist, alert toasts and notification bell. A LIVE · READ-ONLY band on every screen. |
 | Alerts | Price rises above / falls below (fires on the crossing, with cooldown), and "moves by X¢ within N minutes". |
 
+## Sprint 2a: cross-venue matching and arbitrage
+
+| Area | Delivered |
+| --- | --- |
+| Matcher | Every 30 min, pairs each Kalshi market with the Polymarket market most likely to resolve on the same fact: TF-IDF over title/outcome/event text, with synonyms for common outcome wording (Hold = no change, hike = increase, bps), numbers that must agree (thresholds, years), end-date distance and category. Pairs are **suggestions** until you confirm them. |
+| Match review | Arbitrage → Match review: side-by-side markets, prices, end dates, and both rule sets. Confirm as identical or inverse, or reject. Rejected pairs aren't suggested again; a confirmed pair whose rules text later changes is flagged. |
+| Arbitrage | For confirmed pairs, both directions: buy YES on one venue and NO on the other (same side on both for inverse pairs). Net edge = $1 − both asks − both taker fees, plus annualized return to the later end date. Quotes older than `ARB_MAX_QUOTE_AGE_S` are skipped. Top of book only: depth isn't checked yet. |
+| Fees | Kalshi: 0.07 × P × (1 − P) per contract (rounded up per order). Polymarket: category rate × p × (1 − p), with rates configurable via `POLYMARKET_FEE_RATES`. |
+| Episodes | The worker records how long each positive edge stays open (`arb_opportunity`), shown as "Open for". |
+| Tracking | Watched and linked markets stay tracked even if they fall out of a venue's top-N cut. |
+
 ## Architecture
 
 ```

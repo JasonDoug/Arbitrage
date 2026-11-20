@@ -2,22 +2,26 @@ import { useCallback, useEffect, useState } from "react";
 import { api, venueLabel, type Market, type Meta, type Notification } from "./api";
 import { MarketDrawer } from "./components/MarketDrawer";
 import { useLive } from "./live";
+import { ArbitragePage } from "./pages/ArbitragePage";
 import { MarketsPage } from "./pages/MarketsPage";
 import { WatchlistPage } from "./pages/WatchlistPage";
 
-type Page = "markets" | "watchlist";
+type Page = "markets" | "watchlist" | "arb";
 
 const NAV: { id: Page | string; label: string; soon?: string }[] = [
   { id: "markets", label: "Markets" },
   { id: "watchlist", label: "Watchlist" },
-  { id: "arb", label: "Arbitrage", soon: "Sprint 2" },
+  { id: "arb", label: "Arbitrage" },
   { id: "ai", label: "AI Picks", soon: "Sprint 2" },
   { id: "portfolio", label: "Portfolio", soon: "Sprint 3" },
   { id: "sim", label: "Simulation", soon: "Sprint 3+" },
 ];
 
 export default function App() {
-  const [page, setPage] = useState<Page>(() => (location.hash === "#watchlist" ? "watchlist" : "markets"));
+  const [page, setPage] = useState<Page>(() => {
+    const h = location.hash.slice(1);
+    return h === "watchlist" || h === "arb" ? h : "markets";
+  });
   const [meta, setMeta] = useState<Meta | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -46,7 +50,7 @@ export default function App() {
   }, [contested]);
 
   useEffect(() => {
-    location.hash = page === "watchlist" ? "watchlist" : "";
+    location.hash = page === "markets" ? "" : page;
   }, [page]);
 
   const onOpen = useCallback((m: Market) => setOpen(m.id), []);
@@ -89,11 +93,11 @@ export default function App() {
           ))}
         </nav>
         <main>
-          {page === "markets" ? (
+          {page === "markets" && (
             <MarketsPage meta={meta} onOpen={onOpen} refreshKey={refreshKey} contested={contested} setContested={setContested} />
-          ) : (
-            <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />
           )}
+          {page === "watchlist" && <WatchlistPage onOpen={onOpen} refreshKey={refreshKey} />}
+          {page === "arb" && <ArbitragePage onOpenMarket={(id) => setOpen(id)} />}
         </main>
       </div>
       {open && <MarketDrawer marketId={open} onClose={() => setOpen(null)} onChanged={onChanged} />}

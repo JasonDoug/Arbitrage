@@ -161,10 +161,23 @@ class PolymarketAdapter(VenueAdapter):
             return rows[:cap]
         raise VenueError("polymarket: no usable keyset ordering")
 
+    async def _with_kept(self, rows: list[dict[str, Any]], include_tag: bool) -> list[dict[str, Any]]:
+        """Add watched/linked markets that fell outside the top-N cut, fetched by id."""
+        have = {str(r.get("id")) for r in rows}
+        missing = sorted(k for k in self.keep if k not in have and k.isdigit())
+        for i in range(0, len(missing), 100):
+            chunk = missing[i : i + 100]
+            data = await self.http.get_json(
+                "/markets/keyset",
+                {"id": chunk, "limit": len(chunk), "include_tag": "true" if include_tag else None},
+            )
+            rows.extend((data or {}).get("markets") or [])
+        return rows
+
     async def fetch_markets(self) -> list[Market]:
         now = datetime.now(timezone.utc)
         out: list[Market] = []
-        for m in await self._pages(include_tag=True):
+        for m in await self._with_kept(await self._pages(include_tag=True), include_tag=True):
             if not _usable(m) or "id" not in m:
                 continue
             try:
@@ -175,7 +188,8 @@ class PolymarketAdapter(VenueAdapter):
 
     async def fetch_quotes(self) -> list[Quote]:
         now = datetime.now(timezone.utc)
-        return [parse_quote(m, now) for m in await self._pages(include_tag=False) if _usable(m) and "id" in m]
+        rows = await self._with_kept(await self._pages(include_tag=False), include_tag=False)
+        return [parse_quote(m, now) for m in rows if _usable(m) and "id" in m]
 
     async def fetch_history(self, market: dict[str, Any], days: int) -> list[PricePoint]:
         tokens = (market.get("extra") or {}).get("clob_token_ids") or []

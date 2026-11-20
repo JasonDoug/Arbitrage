@@ -85,6 +85,9 @@ class HttpVenue:
 class VenueAdapter(ABC):
     venue_id: str
     venue_name: str
+    # Venue market IDs to keep tracking even if they fall outside the venue's top-N cut
+    # (watched markets and cross-venue links). Set by the ingest worker before each sync.
+    keep: frozenset[str] = frozenset()
 
     @abstractmethod
     async def fetch_markets(self) -> list[Market]:

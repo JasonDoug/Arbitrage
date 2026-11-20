@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     # Tickers per quote request when polling only the tracked markets.
     kalshi_quote_batch: int = 100
 
+    # Cross-venue matching and arbitrage
+    match_interval_s: int = 1800
+    match_min_score: float = 0.5
+    arb_interval_s: int = 30
+    arb_max_quote_age_s: int = 180  # quotes older than this aren't used for arb
+    # Polymarket taker fee rate by our category, e.g. '{"Crypto": 0.072, "Sports": 0.03}'.
+    # Unset = built-in defaults (predictarb/arb.py).
+    polymarket_fee_rates: dict[str, float] | None = None
+
     catalog_interval_s: int = 600
     quote_interval_s: int = 20
     backfill_top_n: int = 150

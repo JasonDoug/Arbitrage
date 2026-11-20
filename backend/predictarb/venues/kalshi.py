@@ -129,7 +129,7 @@ class KalshiAdapter(VenueAdapter):
             cursor = data.get("cursor")
             if not cursor:
                 break
-        kept = select_active(out, self.settings.kalshi_max_markets)
+        kept = select_active(out, self.settings.kalshi_max_markets, self.keep)
         log.info("kalshi: %d open markets listed, tracking %d with trading activity", len(out), len(kept))
         self._tracked = [m.venue_market_id for m in kept]
         return kept
@@ -183,8 +183,9 @@ class KalshiAdapter(VenueAdapter):
         await self.http.aclose()
 
 
-def select_active(markets: list[Market], limit: int) -> list[Market]:
-    """Markets with 24h volume or open interest, highest 24h dollar volume first."""
+def select_active(markets: list[Market], limit: int, keep: frozenset[str] = frozenset()) -> list[Market]:
+    """Markets with 24h volume or open interest, highest 24h dollar volume first,
+    plus any market in `keep` (watched or linked) regardless of activity or rank."""
     def active(m: Market) -> bool:
         q = m.quote
         return q is not None and bool((q.volume_24h or 0) > 0 or (q.open_interest or 0) > 0)
@@ -193,7 +194,9 @@ def select_active(markets: list[Market], limit: int) -> list[Market]:
         q = m.quote
         return (q.volume_24h_usd or 0.0, q.open_interest or 0.0) if q else (0.0, 0.0)
 
-    return sorted((m for m in markets if active(m)), key=key, reverse=True)[:limit]
+    top = sorted((m for m in markets if active(m)), key=key, reverse=True)[:limit]
+    chosen = {m.venue_market_id for m in top}
+    return top + [m for m in markets if m.venue_market_id in keep and m.venue_market_id not in chosen]
 
 
 def parse_candles(candles: list[dict[str, Any]]) -> list[PricePoint]:

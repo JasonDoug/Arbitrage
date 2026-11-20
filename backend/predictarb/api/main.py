@@ -11,7 +11,9 @@ from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnec
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from predictarb import bus, db
+from datetime import datetime, timezone
+
+from predictarb import arb, bus, db
 from predictarb.categories import CATEGORIES
 from predictarb.config import get_settings
 from predictarb.migrate import migrate
@@ -236,6 +238,72 @@ async def notifications(unread: bool = False) -> dict[str, Any]:
 async def notifications_read() -> dict[str, Any]:
     await db.mark_notifications_read(_pool())
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- cross-venue links & arbitrage
+
+class LinkReview(BaseModel):
+    status: Literal["confirmed", "rejected", "suggested"]
+    relation: Literal["identical", "inverse"] | None = None
+    note: str | None = Field(None, max_length=1000)
+
+
+@app.get("/api/links")
+async def links(
+    status: Literal["suggested", "confirmed", "rejected"] | None = "suggested",
+    q: str | None = Query(None, max_length=200),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    items, total = await db.list_links(_pool(), status, limit, offset, q)
+    return {"items": items, "total": total, "counts": await db.link_counts(_pool())}
+
+
+@app.patch("/api/links/{link_id}")
+async def review(link_id: int, body: LinkReview) -> dict[str, Any]:
+    r = await db.review_link(_pool(), link_id, body.status, body.relation, body.note)
+    if r is None:
+        raise HTTPException(404, "link not found")
+    return r
+
+
+_SIDE_KEYS = ("id", "venue", "title", "outcome_label", "url", "category", "yes_bid", "yes_ask", "mid", "quote_ts", "close_ts")
+
+
+@app.get("/api/arb")
+async def arbitrage(
+    include_unconfirmed: bool = False,
+    min_edge: float = Query(0.0, ge=-1, le=1, description="minimum net edge per contract, in dollars"),
+    sort: Literal["edge", "annualized"] = "edge",
+) -> dict[str, Any]:
+    s = get_settings()
+    now = datetime.now(timezone.utc)
+    rows = await db.links_for_arb(_pool(), include_suggested=include_unconfirmed)
+    found = arb.scan(rows, now, s.arb_max_quote_age_s, s.polymarket_fee_rates)
+    episodes = await db.arb_episodes(_pool())
+    items = []
+    for link, opp in found:
+        if opp.edge < min_edge:
+            continue
+        ep = episodes.get((link["id"], opp.direction))
+        items.append(
+            {
+                **opp.as_dict(),
+                "link": {k: link[k] for k in ("id", "status", "relation", "score", "rules_changed")},
+                "a": {k: link["a"][k] for k in _SIDE_KEYS},
+                "b": {k: link["b"][k] for k in _SIDE_KEYS},
+                "first_seen": ep["first_seen"] if ep else None,
+            }
+        )
+    key = (lambda i: i["edge"]) if sort == "edge" else (lambda i: i["annualized"] if i["annualized"] is not None else -9)
+    items.sort(key=key, reverse=True)
+    fresh_links = {l["id"] for l, _ in found}
+    return {
+        "items": items,
+        "links_considered": len(rows),
+        "links_with_stale_quotes": len(rows) - len(fresh_links),
+        "max_quote_age_s": s.arb_max_quote_age_s,
+    }
 
 
 # ---------------------------------------------------------------- live feed

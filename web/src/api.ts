@@ -94,6 +94,57 @@ export const api = {
   readNotifications: () => req("/api/notifications/read", { method: "POST" }),
 };
 
+export type LinkSide = Pick<
+  Market,
+  "id" | "venue" | "title" | "outcome_label" | "event_title" | "category" | "url" | "close_ts" | "yes_bid" | "yes_ask" | "mid" | "quote_ts" | "resolution_source" | "volume_24h_usd"
+> & { rules_text?: string | null };
+
+export type Link = {
+  id: number;
+  status: "suggested" | "confirmed" | "rejected";
+  relation: "identical" | "inverse";
+  score: number;
+  reasons: string[];
+  rules_changed: boolean;
+  llm_relation: string | null;
+  llm_confidence: number | null;
+  llm_differences: string[] | null;
+  note: string | null;
+  a: LinkSide;
+  b: LinkSide;
+};
+
+export type ArbLeg = { venue: string; market_id: string; side: "YES" | "NO"; price: number; fee: number };
+
+export type ArbItem = {
+  link_id: number;
+  direction: string;
+  legs: ArbLeg[];
+  cost: number;
+  fees: number;
+  edge: number;
+  annualized: number | null;
+  days_to_close: number | null;
+  first_seen: string | null;
+  link: { id: number; status: string; relation: string; score: number; rules_changed: boolean };
+  a: LinkSide;
+  b: LinkSide;
+};
+
+export const arbApi = {
+  links: (p: { status?: string; q?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    Object.entries(p).forEach(([k, v]) => v !== undefined && v !== "" && qs.set(k, String(v)));
+    return req<{ items: Link[]; total: number; counts: Record<string, number> }>(`/api/links?${qs}`);
+  },
+  review: (id: number, body: { status: string; relation?: string; note?: string }) =>
+    req(`/api/links/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  opportunities: (p: { include_unconfirmed: boolean; min_edge: number; sort: string }) =>
+    req<{ items: ArbItem[]; links_considered: number; links_with_stale_quotes: number; max_quote_age_s: number }>(
+      `/api/arb?include_unconfirmed=${p.include_unconfirmed}&min_edge=${p.min_edge}&sort=${p.sort}`,
+    ),
+};
+
 // ---- formatting
 
 /** Price in cents. Below 1¢ / above 99¢ always show a decimal so 0.4¢ isn't rounded to "0¢". */

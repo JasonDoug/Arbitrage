@@ -15,7 +15,7 @@ from typing import Any
 import asyncpg
 import redis.asyncio as aioredis
 
-from predictarb import bus, db
+from predictarb import arb, bus, db, matching
 from predictarb.config import Settings, get_settings
 from predictarb.ingest import alerts
 from predictarb.migrate import migrate
@@ -43,6 +43,7 @@ class Ingestor:
 
     async def sync_catalog(self, adapter: VenueAdapter) -> int:
         started = datetime.now(timezone.utc)
+        adapter.keep = await db.kept_ids(self.pool, adapter.venue_id)
         markets = await adapter.fetch_markets()
         new = await db.upsert_markets(self.pool, markets)
         closed = await db.mark_unseen_closed(self.pool, adapter.venue_id, started) if markets else 0
@@ -136,6 +137,45 @@ class Ingestor:
                     await bus.publish(self.redis, bus.NOTIFICATIONS, note)
                     log.info("alert fired: %s", msg)
 
+    # ------------------------------------------------------------ matching & arbitrage
+
+    async def run_matcher(self) -> int:
+        side_a, side_b, existing = await db.matcher_inputs(self.pool)
+        if not side_a or not side_b:
+            return 0
+        suggestions = await asyncio.to_thread(
+            matching.suggest, side_a, side_b, self.s.match_min_score, 1, existing
+        )
+        n = await db.insert_suggestions(self.pool, suggestions)
+        log.info("matcher: %d kalshi x %d polymarket markets -> %d new suggested links", len(side_a), len(side_b), n)
+        return n
+
+    async def match_loop(self) -> None:
+        if not {"kalshi", "polymarket"} <= set(self.adapters):
+            return
+        await asyncio.gather(self.catalog_ready["kalshi"].wait(), self.catalog_ready["polymarket"].wait())
+        while not self._stop.is_set():
+            try:
+                await self.run_matcher()
+            except Exception:
+                log.exception("matcher failed")
+            await self._sleep(self.s.match_interval_s)
+
+    async def scan_arb(self) -> int:
+        links = await db.links_for_arb(self.pool, include_suggested=False)
+        found = arb.scan(links, max_age_s=self.s.arb_max_quote_age_s, pm_rates=self.s.polymarket_fee_rates)
+        await db.record_arb(self.pool, [o for _, o in found], {l["id"] for l in links})
+        return sum(1 for _, o in found if o.edge > 0)
+
+    async def arb_loop(self) -> None:
+        await asyncio.gather(*(e.wait() for e in self.catalog_ready.values()))
+        while not self._stop.is_set():
+            try:
+                await self.scan_arb()
+            except Exception:
+                log.exception("arb scan failed")
+            await self._sleep(self.s.arb_interval_s)
+
     # ------------------------------------------------------------ history backfill
 
     async def backfill_one(self, row: dict[str, Any]) -> int:
@@ -208,6 +248,8 @@ class Ingestor:
             tasks.append(asyncio.create_task(self.catalog_loop(a), name=f"catalog:{a.venue_id}"))
             tasks.append(asyncio.create_task(self.quote_loop(a), name=f"quotes:{a.venue_id}"))
         tasks.append(asyncio.create_task(self.backfill_loop(), name="backfill"))
+        tasks.append(asyncio.create_task(self.match_loop(), name="matcher"))
+        tasks.append(asyncio.create_task(self.arb_loop(), name="arb"))
         tasks.append(asyncio.create_task(self.backfill_request_loop(), name="backfill-requests"))
         await self._stop.wait()
         for t in tasks:

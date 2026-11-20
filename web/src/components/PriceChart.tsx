@@ -17,7 +17,7 @@ export function PriceChart({ points, height = 260 }: { points: HistoryPoint[]; h
       layout: { background: { color: "transparent" }, textColor: css("--muted"), fontFamily: "IBM Plex Mono, monospace", fontSize: 11 },
       grid: { vertLines: { color: css("--grid") }, horzLines: { color: css("--grid") } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.1, bottom: 0.08 } },
-      timeScale: { borderVisible: false, timeVisible: true },
+      timeScale: { borderVisible: false, timeVisible: true, rightOffset: 4 },
       crosshair: { horzLine: { labelBackgroundColor: css("--accent") }, vertLine: { labelBackgroundColor: css("--accent") } },
       localization: { priceFormatter: (p: number) => `${(p * 100).toFixed(1)}¢` },
     });

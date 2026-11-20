@@ -404,3 +404,145 @@ async def list_notifications(pool: asyncpg.Pool, unread_only: bool = False, limi
 
 async def mark_notifications_read(pool: asyncpg.Pool, user_id: str = "me") -> None:
     await pool.execute("UPDATE notification SET read=TRUE WHERE user_id=$1 AND NOT read", user_id)
+
+
+# ---------------------------------------------------------------- cross-venue links
+
+LINK_COLUMNS = """
+    l.id, l.market_a, l.market_b, l.status, l.relation, l.score, l.reasons, l.llm_relation,
+    l.llm_confidence, l.llm_differences, l.llm_model, l.note, l.created_at, l.updated_at, l.reviewed_at,
+    (l.rules_hash_a IS DISTINCT FROM a.rules_hash OR l.rules_hash_b IS DISTINCT FROM b.rules_hash) AS rules_changed
+"""
+
+_SIDE = """
+    {p}.id AS {p}_id, {p}.venue AS {p}_venue, {p}.title AS {p}_title, {p}.outcome_label AS {p}_outcome_label,
+    {p}.event_title AS {p}_event_title, {p}.category AS {p}_category, {p}.url AS {p}_url,
+    {p}.close_ts AS {p}_close_ts, {p}.status AS {p}_status, {p}.yes_bid AS {p}_yes_bid, {p}.yes_ask AS {p}_yes_ask,
+    {p}.mid AS {p}_mid, {p}.quote_ts AS {p}_quote_ts, {p}.rules_text AS {p}_rules_text,
+    {p}.resolution_source AS {p}_resolution_source, {p}.volume_24h_usd AS {p}_volume_24h_usd
+"""
+
+
+def _split_link(r: asyncpg.Record) -> dict[str, Any]:
+    d = dict(r)
+    out = {k: v for k, v in d.items() if not (k.startswith("a_") or k.startswith("b_"))}
+    for side in ("a", "b"):
+        out[side] = {k[2:]: v for k, v in d.items() if k.startswith(side + "_")}
+    return out
+
+
+async def matcher_inputs(pool: asyncpg.Pool) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[tuple[str, str]]]:
+    cols = "id, title, outcome_label, event_title, category, close_ts, rules_hash"
+    a = await pool.fetch(f"SELECT {cols} FROM market WHERE status='open' AND venue='kalshi'")
+    b = await pool.fetch(f"SELECT {cols} FROM market WHERE status='open' AND venue='polymarket'")
+    existing = await pool.fetch("SELECT market_a, market_b FROM market_link")
+    return [dict(r) for r in a], [dict(r) for r in b], {(r["market_a"], r["market_b"]) for r in existing}
+
+
+async def insert_suggestions(pool: asyncpg.Pool, suggestions: list[Any]) -> int:
+    """Insert new suggested links; existing pairs (in any status) are left alone."""
+    n = 0
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for s in suggestions:
+                res = await conn.execute(
+                    """INSERT INTO market_link (market_a, market_b, score, reasons, rules_hash_a, rules_hash_b)
+                       SELECT $1, $2, $3, $4, a.rules_hash, b.rules_hash FROM market a, market b
+                       WHERE a.id = $1 AND b.id = $2
+                       ON CONFLICT (market_a, market_b) DO NOTHING""",
+                    s.a, s.b, s.score, s.reasons,
+                )
+                n += int(res.split()[-1])
+    return n
+
+
+async def list_links(
+    pool: asyncpg.Pool, status: str | None = "suggested", limit: int = 100, offset: int = 0, q: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    where = ["a.status = 'open'", "b.status = 'open'"]
+    args: list[Any] = []
+    if status:
+        args.append(status)
+        where.append(f"l.status = ${len(args)}")
+    if q:
+        args.append(q)
+        where.append(f"(a.title ILIKE '%' || ${len(args)} || '%' OR b.title ILIKE '%' || ${len(args)} || '%')")
+    w = " AND ".join(where)
+    base = "FROM market_link l JOIN market a ON a.id = l.market_a JOIN market b ON b.id = l.market_b"
+    total = await pool.fetchval(f"SELECT count(*) {base} WHERE {w}", *args)
+    args.extend([limit, offset])
+    rows = await pool.fetch(
+        f"SELECT {LINK_COLUMNS}, {_SIDE.format(p='a')}, {_SIDE.format(p='b')} {base} WHERE {w} "
+        f"ORDER BY l.score DESC, l.id LIMIT ${len(args) - 1} OFFSET ${len(args)}",
+        *args,
+    )
+    return [_split_link(r) for r in rows], int(total)
+
+
+async def link_counts(pool: asyncpg.Pool) -> dict[str, int]:
+    rows = await pool.fetch(
+        """SELECT l.status, count(*) n FROM market_link l
+           JOIN market a ON a.id = l.market_a JOIN market b ON b.id = l.market_b
+           WHERE a.status='open' AND b.status='open' GROUP BY l.status"""
+    )
+    return {r["status"]: r["n"] for r in rows}
+
+
+async def review_link(pool: asyncpg.Pool, link_id: int, status: str, relation: str | None, note: str | None) -> dict[str, Any] | None:
+    r = await pool.fetchrow(
+        """UPDATE market_link l SET status=$2, relation=COALESCE($3, relation), note=COALESCE($4, note),
+                  reviewed_at=now(), updated_at=now(),
+                  rules_hash_a=(SELECT rules_hash FROM market WHERE id=l.market_a),
+                  rules_hash_b=(SELECT rules_hash FROM market WHERE id=l.market_b)
+           WHERE id=$1 RETURNING id, status, relation""",
+        link_id, status, relation, note,
+    )
+    return dict(r) if r else None
+
+
+async def links_for_arb(pool: asyncpg.Pool, include_suggested: bool) -> list[dict[str, Any]]:
+    statuses = ["confirmed", "suggested"] if include_suggested else ["confirmed"]
+    rows = await pool.fetch(
+        f"""SELECT {LINK_COLUMNS}, {_SIDE.format(p='a')}, {_SIDE.format(p='b')}
+            FROM market_link l JOIN market a ON a.id = l.market_a JOIN market b ON b.id = l.market_b
+            WHERE l.status = ANY($1) AND a.status='open' AND b.status='open'""",
+        statuses,
+    )
+    return [_split_link(r) for r in rows]
+
+
+async def kept_ids(pool: asyncpg.Pool, venue: str) -> frozenset[str]:
+    """Venue market IDs that must stay tracked: watched markets and non-rejected links."""
+    rows = await pool.fetch(
+        """SELECT m.venue_market_id FROM market m WHERE m.venue = $1 AND (
+               m.id IN (SELECT market_id FROM watchlist_item)
+            OR m.id IN (SELECT market_a FROM market_link WHERE status <> 'rejected')
+            OR m.id IN (SELECT market_b FROM market_link WHERE status <> 'rejected'))""",
+        venue,
+    )
+    return frozenset(r["venue_market_id"] for r in rows)
+
+
+async def record_arb(pool: asyncpg.Pool, opps: list[Any], tracked_links: set[int]) -> None:
+    """Open/extend episodes for positive edges; close episodes whose edge is gone (R5.5)."""
+    positive = {(o.link_id, o.direction): o for o in opps if o.edge > 0}
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            for (link_id, direction), o in positive.items():
+                await conn.execute(
+                    """INSERT INTO arb_opportunity (link_id, direction, best_edge, last_edge, last_cost)
+                       VALUES ($1, $2, $3, $3, $4)
+                       ON CONFLICT (link_id, direction) WHERE closed_at IS NULL DO UPDATE SET
+                           last_seen = now(), last_edge = EXCLUDED.last_edge, last_cost = EXCLUDED.last_cost,
+                           best_edge = GREATEST(arb_opportunity.best_edge, EXCLUDED.best_edge)""",
+                    link_id, direction, o.edge, o.cost,
+                )
+            open_rows = await conn.fetch("SELECT id, link_id, direction FROM arb_opportunity WHERE closed_at IS NULL")
+            stale = [r["id"] for r in open_rows if (r["link_id"], r["direction"]) not in positive and r["link_id"] in tracked_links]
+            if stale:
+                await conn.execute("UPDATE arb_opportunity SET closed_at = now() WHERE id = ANY($1)", stale)
+
+
+async def arb_episodes(pool: asyncpg.Pool) -> dict[tuple[int, str], dict[str, Any]]:
+    rows = await pool.fetch("SELECT * FROM arb_opportunity WHERE closed_at IS NULL")
+    return {(r["link_id"], r["direction"]): dict(r) for r in rows}
