@@ -100,8 +100,7 @@ def test_kalshi_candles(fixture):
 
 @respx.mock
 async def test_polymarket_catalog(settings, fixture):
-    route = respx.get(f"{G}/markets")
-    route.side_effect = [httpx.Response(200, json=fixture("polymarket_markets.json")), httpx.Response(200, json=[])]
+    route = respx.get(f"{G}/markets/keyset").respond(json={"markets": fixture("polymarket_markets.json")})
     markets = await PolymarketAdapter(settings).fetch_markets()
     assert [m.venue_market_id for m in markets] == ["512345", "512999"], "closed and AMM-only markets dropped"
     btc, vgk = markets
@@ -115,17 +114,36 @@ async def test_polymarket_catalog(settings, fixture):
     assert vgk.category == "Sports" and vgk.extra["neg_risk"] is True
     params = route.calls[0].request.url.params
     assert params["closed"] == "false" and params["order"] == "volume24hr" and params["include_tag"] == "true"
+    assert "offset" not in params
 
 
 @respx.mock
-async def test_polymarket_paginates_by_returned_page_size(settings, fixture):
-    rows = fixture("polymarket_markets.json")[:2]
-    page = [dict(rows[0], id=str(i)) for i in range(100)]
-    route = respx.get(f"{G}/markets")
-    route.side_effect = [httpx.Response(200, json=page), httpx.Response(200, json=[dict(rows[1], id="x")]), httpx.Response(200, json=[])]
+async def test_polymarket_keyset_cursor_paging(settings, fixture):
+    row = fixture("polymarket_markets.json")[0]
+    route = respx.get(f"{G}/markets/keyset")
+    route.side_effect = [
+        httpx.Response(200, json={"markets": [dict(row, id=str(i)) for i in range(100)], "next_cursor": "c1"}),
+        httpx.Response(200, json={"markets": [dict(row, id="last")]}),  # last page: no next_cursor
+    ]
     markets = await PolymarketAdapter(settings).fetch_markets()
-    assert len(markets) == 101, "a full 100-row page is not the last page"
-    assert [c.request.url.params["offset"] for c in route.calls] == ["0", "100", "101"]
+    assert len(markets) == 101
+    assert "after_cursor" not in route.calls[0].request.url.params
+    assert route.calls[1].request.url.params["after_cursor"] == "c1"
+    assert len(route.calls) == 2
+
+
+@respx.mock
+async def test_polymarket_order_fallback_sorts_locally(settings, fixture):
+    rows = fixture("polymarket_markets.json")[:2]  # volume24hr 95321 and 1200
+    reject = httpx.Response(422, json={"error": "invalid order field"})
+    route = respx.get(f"{G}/markets/keyset")
+    route.side_effect = [reject, reject, httpx.Response(200, json={"markets": [rows[1], rows[0]]})]
+    settings.polymarket_max_markets = 1
+    adapter = PolymarketAdapter(settings)
+    markets = await adapter.fetch_markets()
+    assert [c.request.url.params.get("order") for c in route.calls] == ["volume24hr", "volume_24hr", None]
+    assert [m.venue_market_id for m in markets] == ["512345"], "highest 24h volume kept after local sort"
+    assert adapter._order is None, "the working option is remembered"
 
 
 @respx.mock

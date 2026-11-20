@@ -18,8 +18,12 @@ from predictarb.venues.base import HttpVenue, VenueAdapter, VenueError, parse_ts
 
 log = logging.getLogger(__name__)
 
-# Gamma caps page size (100 at time of writing); we page by whatever it returns.
+# /markets/keyset returns at most 100 rows per page and pages with an opaque cursor.
 PAGE = 100
+# `order` fields for keyset aren't documented; tried in this order (None = sort locally).
+ORDER_CANDIDATES = ["volume24hr", "volume_24hr"]
+HARD_SCAN_LIMIT = 60_000
+_UNSET: Any = object()
 # prices-history rejects long startTs/endTs spans; fetch in windows and shrink on rejection.
 HISTORY_WINDOW = timedelta(days=7)
 MIN_HISTORY_WINDOW = timedelta(hours=12)
@@ -106,27 +110,56 @@ class PolymarketAdapter(VenueAdapter):
     def __init__(self, settings: Settings, http: HttpVenue | None = None):
         self.settings = settings
         self.http = http or HttpVenue(settings.polymarket_gamma_url, rate_per_s=5)
+        self._order: str | None = _UNSET
+
+    async def _keyset_page(self, order: str | None, include_tag: bool, cursor: str | None) -> dict[str, Any]:
+        data = await self.http.get_json(
+            "/markets/keyset",
+            {
+                "closed": "false",
+                "limit": PAGE,
+                "after_cursor": cursor,
+                "order": order,
+                "ascending": "false" if order else None,
+                "include_tag": "true" if include_tag else None,
+            },
+        )
+        return data if isinstance(data, dict) else {}
 
     async def _pages(self, include_tag: bool) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        offset = 0
-        while offset < self.settings.polymarket_max_markets:
-            batch = await self.http.get_json(
-                "/markets",
-                {
-                    "closed": "false",
-                    "limit": PAGE,
-                    "offset": offset,
-                    "order": "volume24hr",
-                    "ascending": "false",
-                    "include_tag": "true" if include_tag else None,
-                },
-            )
-            if not isinstance(batch, list) or not batch:
-                break
-            rows.extend(batch)
-            offset += len(batch)
-        return rows[: self.settings.polymarket_max_markets]
+        """Open markets, highest 24h volume first, capped at polymarket_max_markets.
+
+        Uses /markets/keyset: plain /markets rejects deep offsets. The docs don't list which
+        fields `order` accepts, so try candidates once and remember the first that works;
+        if none does, page through everything and sort locally.
+        """
+        cap = self.settings.polymarket_max_markets
+        candidates = [self._order] if self._order is not _UNSET else [*ORDER_CANDIDATES, None]
+        for order in candidates:
+            try:
+                first = await self._keyset_page(order, include_tag, None)
+            except VenueError as e:
+                if order is not None and "422" in str(e):
+                    log.info("polymarket: keyset order=%s rejected, trying next option", order)
+                    continue
+                raise
+            if self._order is _UNSET:
+                self._order = order
+                log.info("polymarket: keyset pagination ordered by %s", order or "nothing (sorting locally)")
+            rows: list[dict[str, Any]] = list(first.get("markets") or [])
+            cursor = first.get("next_cursor")
+            limit = cap if order else HARD_SCAN_LIMIT
+            while cursor and len(rows) < limit:
+                page = await self._keyset_page(order, include_tag, cursor)
+                batch = page.get("markets") or []
+                if not batch:
+                    break
+                rows.extend(batch)
+                cursor = page.get("next_cursor")
+            if not order:
+                rows.sort(key=lambda m: to_float(m.get("volume24hr")) or 0.0, reverse=True)
+            return rows[:cap]
+        raise VenueError("polymarket: no usable keyset ordering")
 
     async def fetch_markets(self) -> list[Market]:
         now = datetime.now(timezone.utc)
